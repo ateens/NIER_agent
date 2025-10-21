@@ -1,0 +1,6 @@
+name: /home/hci/Desktop/LSH/NIER_vllm/.conda_env
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+prefix: /home/hci/Desktop/LSH/NIER_vllm/.conda_env

@@ -1,0 +1,6 @@
+name: chromadb
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+prefix: /home/hci/miniconda3/envs/chromadb

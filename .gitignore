@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+
+# LangFlow exports (track manually if needed)
+artifacts/langflow/*.json
+artifacts/langflow/*.langflow
+
+# Model weights placeholder
+models/*
+!models/.gitkeep
+
+# Chroma persistent data
+docker/chromadb/chroma_db/*
+!docker/chromadb/chroma_db/.gitkeep
+
+# Environment capture directories may contain large files
+.env
+.mamba
+.conda

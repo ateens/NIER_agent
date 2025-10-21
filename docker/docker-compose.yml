@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--model=/app/models/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit"
+      - "--host=0.0.0.0"
+      - "--port=8005"
+      - "--served-model-name=qwen3-30b-awq"
+      - "--tensor-parallel-size=2"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser=hermes"
+      - "--gpu-memory-utilization=0.9"
+      - "--max-num-seqs=32"
+      - "--max-num-batched-tokens=2048"
+    volumes:
+      - ../models:/app/models
+    ports:
+      - "8005:8005"
+
+  chroma:
+    build:
+      context: ..
+      dockerfile: docker/chromadb/Dockerfile
+    volumes:
+      - ../data/chroma_db:/app/chroma_db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/mcp/Dockerfile
+    env_file:
+      - ../.env.langflow
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../docker/mcp/app:/app
+      - ../models:/app/models
+      - ../data:/app/data
+    ports:
+      - "9999:9999"
+
+  langflow:
+    build:
+      context: ..
+      dockerfile: docker/langflow/Dockerfile
+    depends_on:
+      - mcp
+      - vllm
+      - chroma
+    env_file:
+      - ../.env.langflow
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../docker/langflow/flows:/app/flows
+      - ../docker/langflow/custom_nodes:/app/custom_nodes
+      - ../models:/app/models
+      - ../data:/app/data
+    ports:
+      - "7860:7860"

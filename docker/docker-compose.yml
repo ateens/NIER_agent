@@ -39,6 +39,8 @@ services:
     build:
       context: ..
       dockerfile: docker/mcp/Dockerfile
+    environment:
+      - NIER_STATION_SIMILARITY_PATH=/app/data/similarity_results_v2.pkl
     env_file:
       - ../.env.langflow
     extra_hosts:
@@ -47,6 +49,8 @@ services:
       - ../docker/mcp/app:/app
       - ../models:/app/models
       - ../data:/app/data
+      - ../NIER_vllm/NIERModules:/app/NIER_vllm/NIERModules
+      - ../NIER/NIERModules:/app/NIER/NIERModules
     ports:
       - "9999:9999"
 
@@ -67,5 +71,6 @@ services:
       - ../docker/langflow/custom_nodes:/app/custom_nodes
       - ../models:/app/models
       - ../data:/app/data
+      - ../docker/langflow/storage:/app/storage 
     ports:
       - "7860:7860"

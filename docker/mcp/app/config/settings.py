@@ -36,13 +36,7 @@ def get_settings() -> Settings:
     max_related = os.getenv("NIER_MAX_RELATED_STATIONS")
 
     base_dir = Path(__file__).resolve()
-    # We expect the project root to contain `models/trep`.
-    project_root = base_dir
-    for parent in base_dir.parents:
-        if (parent / "models" / "trep").exists():
-            project_root = parent
-            break
-    default_trep_dir = project_root / "models" / "trep"
+    default_trep_dir = base_dir.parent / "internal" / "NIERModules" / "chroma_trep" / "model_pkl"
     trep_model_dir = Path(os.getenv("TREP_MODEL_DIR", str(default_trep_dir))).expanduser()
 
     return Settings(

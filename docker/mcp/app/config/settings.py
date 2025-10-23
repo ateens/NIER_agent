@@ -32,18 +32,12 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load reusable environment-driven settings."""
-    pg_host = (
-        os.getenv("POSTGRESQL_URL")
-        or os.getenv("POSTGRESQL_HOST")
-        or "localhost"
-    )
+    pg_host = os.getenv("POSTGRESQL_HOST", "localhost")
     max_related = os.getenv("NIER_MAX_RELATED_STATIONS")
 
     base_dir = Path(__file__).resolve().parents[3]
     default_trep_dir = base_dir / "models" / "trep"
-    trep_model_dir = Path(
-        os.getenv("NIER_TREP_MODEL_DIR", str(default_trep_dir))
-    ).expanduser()
+    trep_model_dir = Path(os.getenv("TREP_MODEL_DIR", str(default_trep_dir))).expanduser()
 
     return Settings(
         postgres_user=os.getenv("POSTGRESQL_USER", "inha"),

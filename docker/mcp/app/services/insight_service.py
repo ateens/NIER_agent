@@ -4,6 +4,7 @@ import math
 import os
 import sys
 from functools import lru_cache
+from itertools import cycle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -40,36 +41,6 @@ except ImportError as exc:  # pragma: no cover - surface meaningful error
 __all__ = ["build_insight_payload"]
 
 
-def _parse_device_map() -> Dict[str, str]:
-    raw = os.getenv("NIER_TREP_DEVICE_MAP")
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.warning("Invalid JSON for NIER_TREP_DEVICE_MAP: %s", exc)
-        return {}
-
-    if not isinstance(parsed, dict):
-        logger.warning("NIER_TREP_DEVICE_MAP must be a JSON object")
-        return {}
-
-    normalized: Dict[str, str] = {}
-    for key, value in parsed.items():
-        if isinstance(value, str):
-            normalized[str(key).upper()] = value.strip()
-    return normalized
-
-
-def _get_default_device() -> str:
-    env_default = os.getenv("NIER_TREP_DEFAULT_DEVICE")
-    if env_default:
-        return env_default.strip()
-    if torch is not None and torch.cuda.is_available():
-        return "cuda:0"
-    return "cpu"
-
-
 def _sanitize_device(device: str) -> str:
     device = (device or "").strip() or "cpu"
     if device.startswith("cuda"):
@@ -90,11 +61,41 @@ def _sanitize_device(device: str) -> str:
     return device
 
 
-def _resolve_device(element: str) -> str:
-    device_map = _parse_device_map()
-    default_device = _get_default_device()
-    candidate = device_map.get(element.upper(), default_device)
-    return _sanitize_device(candidate)
+@lru_cache(maxsize=1)
+def _resolve_device_pool() -> List[str]:
+    env_value = os.getenv("NIER_TREP_DEFAULT_DEVICE", "").strip()
+    candidates: List[str] = []
+    if env_value:
+        tokens = [token.strip() for token in env_value.split(",") if token.strip()]
+        candidates.extend(tokens)
+    elif torch is not None and torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        candidates.extend([f"cuda:{idx}" for idx in range(gpu_count)])
+    if not candidates:
+        candidates.append("cpu")
+
+    sanitized: List[str] = []
+    for candidate in candidates:
+        sanitized_device = _sanitize_device(candidate)
+        if sanitized_device not in sanitized:
+            sanitized.append(sanitized_device)
+
+    if not sanitized:
+        sanitized = ["cpu"]
+
+    logger.info("T-Rep device pool resolved to: %s", sanitized)
+    return sanitized
+
+
+_DEVICE_CYCLE = None
+
+
+def _next_device() -> str:
+    global _DEVICE_CYCLE
+    if _DEVICE_CYCLE is None:
+        devices = _resolve_device_pool()
+        _DEVICE_CYCLE = cycle(devices)
+    return next(_DEVICE_CYCLE)
 
 
 def _resolve_weight_path(model_dir: str, element: str) -> Path:
@@ -287,7 +288,7 @@ def build_insight_payload(
 
         target_element = (element or "SO2").upper()
         weight_path = _resolve_weight_path(settings.trep_model_dir, target_element)
-        resolved_device = _sanitize_device(device or _resolve_device(target_element))
+        resolved_device = _sanitize_device(device or _next_device())
         encoding_window = os.getenv("NIER_TREP_ENCODING_WINDOW", "full_series")
         time_embedding = os.getenv("NIER_TREP_TIME_EMBEDDING", "t2v_sin")
 

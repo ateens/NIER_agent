@@ -36,7 +36,7 @@ def get_settings() -> Settings:
     max_related = os.getenv("NIER_MAX_RELATED_STATIONS")
 
     base_dir = Path(__file__).resolve()
-    default_trep_dir = base_dir.parent / "internal" / "NIERModules" / "chroma_trep" / "model_pkl"
+    default_trep_dir = base_dir.parent / "vendor" / "modules" / "NIER" / "chroma_trep" / "model_pkl"
     trep_model_dir = Path(os.getenv("TREP_MODEL_DIR", str(default_trep_dir))).expanduser()
 
     return Settings(

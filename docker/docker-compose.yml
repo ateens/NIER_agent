@@ -29,7 +29,7 @@ services:
       context: ..
       dockerfile: docker/chromadb/Dockerfile
     volumes:
-      - ../data/chroma_db:/app/chroma_db
+      - ../docker/chromadb/chroma_db:/app/chroma_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

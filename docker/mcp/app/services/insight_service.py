@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - surface clear message later
     torch = None  # type: ignore
 
 from config import get_settings
-from internal.NIERModules.chroma_trep import TRepEmbedding  # type: ignore
+from vendor.modules.NIER.chroma_trep import TRepEmbedding  # type: ignore
 
 from .common import parse_series_values
 

@@ -9,8 +9,8 @@ import pandas as pd
 from fastdtw import fastdtw
 
 from config import Settings
-from internal.NIERModules.postgres_handler import fetch_data
-from internal.station_network import StationNetwork
+from vendor.modules.NIER.postgres_handler import fetch_data
+from .station_network import StationNetwork
 
 from .common import ensure_sequence, parse_series_values
 

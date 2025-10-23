@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - surface clear message later
 
 from config import get_settings
 
-from .common import ensure_sequence, parse_series_values
+from .common import parse_series_values
 
 logger = logging.getLogger(__name__)
 
@@ -129,25 +129,37 @@ def _resolve_weight_path(model_dir: str, element: str) -> Path:
     )
 
 
-def _compose_documents(values: Optional[List[Any]]) -> List[str]:
+def _normalize_entries(values: Optional[Any]) -> List[Any]:
+    if values is None:
+        return []
+    if isinstance(values, dict):
+        return [values]
+    if isinstance(values, (list, tuple)):
+        return list(values)
+    return [values]
+
+
+def _compose_documents(values: Optional[Any]) -> List[str]:
     documents: List[str] = []
-    for entry in ensure_sequence(values):
+    for entry in _normalize_entries(values):
         if isinstance(entry, dict):
             raw = entry.get("values")
             if isinstance(raw, str) and raw.strip():
                 documents.append(raw)
                 continue
             floats = parse_series_values(entry)
-            documents.append(
-                ",".join("nan" if math.isnan(val) else str(val) for val in floats)
-            )
+            documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
         elif isinstance(entry, str):
             documents.append(entry)
         elif isinstance(entry, (list, tuple)):
-            floats = [float(val) for val in entry]
-            documents.append(
-                ",".join("nan" if math.isnan(val) else str(val) for val in floats)
-            )
+            floats: List[float] = []
+            for val in entry:
+                try:
+                    floats.append(float(val))
+                except (TypeError, ValueError):
+                    logger.debug("Skipping non-numeric value in list entry: %s", val)
+            if floats:
+                documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
         else:
             try:
                 value = float(entry)
@@ -262,7 +274,7 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def build_insight_payload(
-    values: Optional[List[Any]] = None,
+    values: Optional[Any] = None,
     *,
     element: Optional[str] = None,
     collection: Optional[str] = None,
@@ -320,7 +332,7 @@ def build_insight_payload(
         metadata.update(
             {
                 "embedding_source": "generated",
-                "input_value_count": len(documents),
+                "input_value_count": len(_normalize_entries(values)),
                 "trep_device": resolved_device,
                 "trep_model_path": str(weight_path),
                 "embedding_dim": len(generated_embedding),

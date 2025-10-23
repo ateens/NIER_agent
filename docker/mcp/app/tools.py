@@ -48,7 +48,7 @@ def timeseries_analysis(
 
 
 def insight_retrieval(
-    values: Optional[List[Any]] = None,
+    values: Optional[Any] = None,
     *,
     element: Optional[str] = None,
     collection: Optional[str] = None,

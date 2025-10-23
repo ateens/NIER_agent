@@ -49,8 +49,6 @@ services:
       - ../docker/mcp/app:/app
       - ../models:/app/models
       - ../data:/app/data
-      - ../NIER_vllm/NIERModules:/app/NIER_vllm/NIERModules
-      - ../NIER/NIERModules:/app/NIER/NIERModules
     ports:
       - "9999:9999"
 

@@ -2,10 +2,8 @@ import json
 import logging
 import math
 import os
-import sys
 from functools import lru_cache
 from itertools import cycle
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -16,39 +14,11 @@ except ImportError:  # pragma: no cover - surface clear message later
     torch = None  # type: ignore
 
 from config import get_settings
+from internal.NIERModules.chroma_trep import TRepEmbedding  # type: ignore
 
 from .common import parse_series_values
 
 logger = logging.getLogger(__name__)
-
-
-# Ensure NIERModules package is on sys.path for T-Rep utilities
-_MODULE_CANDIDATES: List[Path] = []
-_current_path = Path(__file__).resolve()
-_parent_candidates = [_current_path.parent, *_current_path.parents]
-_module_suffixes = (
-    Path("NIERModules"),
-    Path("NIER_langflow") / "NIERModules",
-    Path("NIER") / "NIERModules",
-    Path("NIER_vllm") / "NIERModules",
-)
-
-for parent in _parent_candidates:
-    for suffix in _module_suffixes:
-        candidate = parent / suffix
-        if candidate.exists() and candidate.is_dir():
-            _MODULE_CANDIDATES.append(candidate)
-
-for _candidate in _MODULE_CANDIDATES:
-    candidate_str = str(_candidate)
-    if candidate_str not in sys.path:
-        sys.path.append(candidate_str)
-
-try:  # pylint: disable=wrong-import-position
-    from chroma_trep import TRepEmbedding  # type: ignore
-except ImportError as exc:  # pragma: no cover - surface meaningful error
-    TRepEmbedding = None  # type: ignore
-    logger.error("Failed to import TRepEmbedding: %s", exc)
 
 
 __all__ = ["build_insight_payload"]
@@ -178,8 +148,6 @@ def _load_trep_embedding(
     encoding_window: str,
     time_embedding: Optional[str],
 ) -> "TRepEmbedding":
-    if TRepEmbedding is None:  # pragma: no cover - configuration error
-        raise RuntimeError("TRepEmbedding module is not available")
     if torch is None:  # pragma: no cover - configuration error
         raise RuntimeError("PyTorch is required for T-Rep embeddings")
     logger.info(

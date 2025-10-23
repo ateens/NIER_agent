@@ -61,7 +61,7 @@ def main(argv: list[str]) -> None:
 
     original = result.get("original", {})
     values = original.get("values", "")
-    sample = values.split(",")
+    sample = values.split(",")[:10]
     print("\n✅ Query succeeded.")
     print(f"Original series length: {len(values.split(','))}")
     print(f"Sample values: {sample}")

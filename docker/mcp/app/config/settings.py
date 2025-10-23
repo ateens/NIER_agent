@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 
@@ -21,6 +22,11 @@ class Settings:
     additional_days: int
     db_csv_path: str
     max_related: Optional[int]
+    vector_db_host: str
+    vector_db_port: str
+    vector_collection: str
+    vector_db_top_k: int
+    trep_model_dir: str
 
 
 @lru_cache(maxsize=1)
@@ -32,6 +38,13 @@ def get_settings() -> Settings:
         or "localhost"
     )
     max_related = os.getenv("NIER_MAX_RELATED_STATIONS")
+
+    base_dir = Path(__file__).resolve().parents[3]
+    default_trep_dir = base_dir / "models" / "trep"
+    trep_model_dir = Path(
+        os.getenv("NIER_TREP_MODEL_DIR", str(default_trep_dir))
+    ).expanduser()
+
     return Settings(
         postgres_user=os.getenv("POSTGRESQL_USER", "inha"),
         postgres_password=os.getenv("POSTGRESQL_PASSWORD", "inha3345!!"),
@@ -42,4 +55,9 @@ def get_settings() -> Settings:
         additional_days=int(os.getenv("ADDITIONAL_DAYS", "14")),
         db_csv_path=os.getenv("NIER_TIMESERIES_CSV_PATH", ""),
         max_related=int(max_related) if max_related is not None else None,
+        vector_db_host=os.getenv("VECTOR_DB_HOST", "http://localhost"),
+        vector_db_port=os.getenv("VECTOR_DB_PORT", "8000"),
+        vector_collection=os.getenv("VECTOR_COLLECTION_NAME", "time_series_collection_trep"),
+        vector_db_top_k=int(os.getenv("VECTOR_DB_TOP_K", "10")),
+        trep_model_dir=str(trep_model_dir),
     )

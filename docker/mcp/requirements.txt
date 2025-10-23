@@ -23,6 +23,7 @@ chromadb==0.5.18
 
 # Database clients
 psycopg2-binary==2.9.9
+SQLAlchemy==2.0.32
 
 # Transformers & embedding utilities
 transformers==4.36.2

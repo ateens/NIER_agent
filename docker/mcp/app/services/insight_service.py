@@ -1,8 +1,251 @@
+import json
+import logging
+import math
+import os
+import sys
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from .common import coerce_value_payload
+import requests
+
+try:  # Optional dependency, required when generating embeddings
+    import torch  # type: ignore
+except ImportError:  # pragma: no cover - surface clear message later
+    torch = None  # type: ignore
+
+from config import get_settings
+
+from .common import ensure_sequence, parse_series_values
+
+logger = logging.getLogger(__name__)
+
+
+# Ensure NIERModules package is on sys.path for T-Rep utilities
+_MODULE_CANDIDATES = [
+    Path(__file__).resolve().parents[5] / "NIER_langflow" / "NIERModules",
+    Path(__file__).resolve().parents[5] / "NIER" / "NIERModules",
+]
+for _candidate in _MODULE_CANDIDATES:
+    if _candidate.exists() and str(_candidate) not in sys.path:
+        sys.path.append(str(_candidate))
+
+try:  # pylint: disable=wrong-import-position
+    from chroma_trep import TRepEmbedding  # type: ignore
+except ImportError as exc:  # pragma: no cover - surface meaningful error
+    TRepEmbedding = None  # type: ignore
+    logger.error("Failed to import TRepEmbedding: %s", exc)
+
 
 __all__ = ["build_insight_payload"]
+
+
+def _parse_device_map() -> Dict[str, str]:
+    raw = os.getenv("NIER_TREP_DEVICE_MAP")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid JSON for NIER_TREP_DEVICE_MAP: %s", exc)
+        return {}
+
+    if not isinstance(parsed, dict):
+        logger.warning("NIER_TREP_DEVICE_MAP must be a JSON object")
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key, value in parsed.items():
+        if isinstance(value, str):
+            normalized[str(key).upper()] = value.strip()
+    return normalized
+
+
+def _get_default_device() -> str:
+    env_default = os.getenv("NIER_TREP_DEFAULT_DEVICE")
+    if env_default:
+        return env_default.strip()
+    if torch is not None and torch.cuda.is_available():
+        return "cuda:0"
+    return "cpu"
+
+
+def _sanitize_device(device: str) -> str:
+    device = (device or "").strip() or "cpu"
+    if device.startswith("cuda"):
+        if torch is None or not torch.cuda.is_available():
+            logger.warning("CUDA requested but unavailable. Falling back to cpu.")
+            return "cpu"
+        if ":" in device:
+            try:
+                index = int(device.split(":", 1)[1])
+            except ValueError:
+                logger.warning("Invalid CUDA device '%s'. Using cuda:0", device)
+                return "cuda:0"
+            if index >= torch.cuda.device_count():
+                logger.warning(
+                    "CUDA device index %s out of range. Using cuda:0", index
+                )
+                return "cuda:0"
+    return device
+
+
+def _resolve_device(element: str) -> str:
+    device_map = _parse_device_map()
+    default_device = _get_default_device()
+    candidate = device_map.get(element.upper(), default_device)
+    return _sanitize_device(candidate)
+
+
+def _resolve_weight_path(model_dir: str, element: str) -> Path:
+    element = element.upper()
+    base_dir = Path(model_dir)
+    candidate = base_dir / f"model_{element}.pt"
+    if candidate.exists():
+        return candidate
+    generic = base_dir / "model.pt"
+    if generic.exists():
+        logger.warning(
+            "Specific T-Rep weight for %s not found. Using generic model at %s.",
+            element,
+            generic,
+        )
+        return generic
+    raise FileNotFoundError(
+        f"T-Rep weight file not found for element '{element}' in {model_dir}"
+    )
+
+
+def _compose_documents(values: Optional[Sequence[Any]]) -> List[str]:
+    documents: List[str] = []
+    for entry in ensure_sequence(values):
+        if isinstance(entry, dict):
+            raw = entry.get("values")
+            if isinstance(raw, str) and raw.strip():
+                documents.append(raw)
+                continue
+            floats = parse_series_values(entry)
+            documents.append(
+                ",".join("nan" if math.isnan(val) else str(val) for val in floats)
+            )
+        elif isinstance(entry, str):
+            documents.append(entry)
+        elif isinstance(entry, (list, tuple)):
+            floats = [float(val) for val in entry]
+            documents.append(
+                ",".join("nan" if math.isnan(val) else str(val) for val in floats)
+            )
+        else:
+            try:
+                value = float(entry)
+                documents.append(str(value))
+            except (TypeError, ValueError):
+                logger.debug("Skipping unsupported value type in documents: %s", entry)
+    return documents
+
+
+@lru_cache(maxsize=16)
+def _load_trep_embedding(
+    element: str,
+    weight_path: str,
+    device: str,
+    encoding_window: str,
+    time_embedding: Optional[str],
+) -> "TRepEmbedding":
+    if TRepEmbedding is None:  # pragma: no cover - configuration error
+        raise RuntimeError("TRepEmbedding module is not available")
+    if torch is None:  # pragma: no cover - configuration error
+        raise RuntimeError("PyTorch is required for T-Rep embeddings")
+    logger.info(
+        "Loading T-Rep weights for %s from %s on %s",
+        element,
+        weight_path,
+        device,
+    )
+    return TRepEmbedding(
+        weight_path=weight_path,
+        device=device,
+        encoding_window=encoding_window,
+        time_embedding=time_embedding,
+    )
+
+
+def _compose_base_url(host: str, port: str) -> str:
+    host = (host or "http://localhost").rstrip("/")
+    if not host.startswith("http://") and not host.startswith("https://"):
+        host = f"http://{host}"
+    if port and f":{port}" not in host.split("//", 1)[-1]:
+        host = f"{host}:{port}"
+    return host
+
+
+@lru_cache(maxsize=8)
+def _resolve_collection_id(base_url: str, collection_name: str) -> str:
+    url = f"{base_url}/api/v1/collections"
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    collections = response.json()
+    for collection in collections:
+        if collection.get("name") == collection_name:
+            return collection.get("id")
+    raise RuntimeError(f"Collection '{collection_name}' not found on {base_url}")
+
+
+def _query_chromadb(
+    base_url: str,
+    collection_id: str,
+    embedding: List[float],
+    top_k: int,
+    filters: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "query_embeddings": [embedding],
+        "n_results": top_k,
+        "include": ["metadatas", "documents", "distances", "embeddings"],
+    }
+    if filters:
+        payload["where"] = filters
+
+    url = f"{base_url}/api/v1/collections/{collection_id}/query"
+    response = requests.post(url, json=payload, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    ids = chroma_response.get("ids", [[]])
+    metadatas = chroma_response.get("metadatas", [[]])
+    distances = chroma_response.get("distances", [[]])
+    documents = chroma_response.get("documents", [[]])
+    embeddings = chroma_response.get("embeddings", [[]])
+
+    if not ids or not isinstance(ids, list):
+        return []
+
+    first_ids = ids[0] if ids else []
+    first_metadatas = metadatas[0] if metadatas else []
+    first_distances = distances[0] if distances else []
+    first_documents = documents[0] if documents else []
+    first_embeddings = embeddings[0] if embeddings else []
+
+    neighbors: List[Dict[str, Any]] = []
+    for idx, metadata, distance, document, embed in zip(
+        first_ids,
+        first_metadatas,
+        first_distances,
+        first_documents,
+        first_embeddings,
+    ):
+        neighbors.append(
+            {
+                "id": idx,
+                "distance": distance,
+                "metadata": metadata,
+                "document": document,
+                "embedding": embed,
+            }
+        )
+    return neighbors
 
 
 def build_insight_payload(
@@ -17,29 +260,100 @@ def build_insight_payload(
     top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    settings = get_settings()
+
+    if perform_embedding and torch is None:
+        raise RuntimeError("PyTorch is required for T-Rep embeddings. Install torch.")
+
     metadata: Dict[str, Any] = {
-        "element": element,
-        "collection": collection,
         "perform_embedding": perform_embedding,
         "perform_search": perform_search,
-        "device": device or "cuda:0",
+        "collection": collection or settings.vector_collection,
+        "vector_db_host": settings.vector_db_host,
+        "vector_db_port": settings.vector_db_port,
         "top_k": top_k,
+        "filters": filters or {},
+        "element": element,
     }
 
     generated_embedding: Optional[List[float]] = embedding
+
     if perform_embedding:
-        parsed_values = coerce_value_payload(values)
-        metadata["embedding_source"] = "generated" if parsed_values else "empty_input"
-        generated_embedding = []  # TODO: integrate actual T-Rep inference
-        metadata["input_value_count"] = len(parsed_values)
+        documents = _compose_documents(values)
+        if not documents:
+            raise ValueError(
+                "values must contain at least one time-series when perform_embedding=True"
+            )
+
+        target_element = (element or "SO2").upper()
+        weight_path = _resolve_weight_path(settings.trep_model_dir, target_element)
+        resolved_device = _sanitize_device(device or _resolve_device(target_element))
+        encoding_window = os.getenv("NIER_TREP_ENCODING_WINDOW", "full_series")
+        time_embedding = os.getenv("NIER_TREP_TIME_EMBEDDING", "t2v_sin")
+
+        embedding_fn = _load_trep_embedding(
+            target_element,
+            str(weight_path),
+            resolved_device,
+            encoding_window,
+            time_embedding,
+        )
+
+        trep_embeddings = embedding_fn(documents)
+        if not trep_embeddings:
+            raise RuntimeError("T-Rep embedding returned no results")
+
+        generated_embedding = trep_embeddings[0]
+        metadata.update(
+            {
+                "embedding_source": "generated",
+                "input_value_count": len(documents),
+                "trep_device": resolved_device,
+                "trep_model_path": str(weight_path),
+                "embedding_dim": len(generated_embedding),
+            }
+        )
     else:
-        metadata["embedding_source"] = "provided"
-        metadata["input_value_count"] = len(generated_embedding or [])
+        if generated_embedding is None:
+            raise ValueError(
+                "embedding must be provided when perform_embedding=False"
+            )
+        metadata.update(
+            {
+                "embedding_source": "provided",
+                "input_value_count": len(generated_embedding),
+                "embedding_dim": len(generated_embedding),
+            }
+        )
 
     neighbors: List[Dict[str, Any]] = []
     if perform_search:
-        metadata["search_filters"] = filters or {}
-        neighbors = []  # TODO: integrate Chroma/Vector DB search
+        if generated_embedding is None:
+            raise ValueError("embedding vector required for vector search")
+
+        base_url = _compose_base_url(settings.vector_db_host, settings.vector_db_port)
+        collection_name = collection or settings.vector_collection
+        try:
+            collection_id = _resolve_collection_id(base_url, collection_name)
+            metadata["collection_id"] = collection_id
+            where_filters = dict(filters or {})
+            if element:
+                where_filters.setdefault("element", element.upper())
+            response = _query_chromadb(
+                base_url,
+                collection_id,
+                generated_embedding,
+                top_k=top_k or settings.vector_db_top_k,
+                filters=where_filters or None,
+            )
+            neighbors = _format_neighbors(response)
+            metadata["returned_neighbors"] = len(neighbors)
+        except requests.RequestException as exc:
+            logger.error("Failed to query ChromaDB: %s", exc)
+            metadata["search_error"] = str(exc)
+        except RuntimeError as exc:
+            logger.error("ChromaDB error: %s", exc)
+            metadata["search_error"] = str(exc)
 
     return {
         "embedding": generated_embedding,

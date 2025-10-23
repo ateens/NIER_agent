@@ -30,6 +30,7 @@ _module_suffixes = (
     Path("NIERModules"),
     Path("NIER_langflow") / "NIERModules",
     Path("NIER") / "NIERModules",
+    Path("NIER_vllm") / "NIERModules",
 )
 
 for parent in _parent_candidates:

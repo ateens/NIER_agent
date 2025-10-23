@@ -23,13 +23,25 @@ logger = logging.getLogger(__name__)
 
 
 # Ensure NIERModules package is on sys.path for T-Rep utilities
-_MODULE_CANDIDATES = [
-    Path(__file__).resolve().parents[5] / "NIER_langflow" / "NIERModules",
-    Path(__file__).resolve().parents[5] / "NIER" / "NIERModules",
-]
+_MODULE_CANDIDATES: List[Path] = []
+_current_path = Path(__file__).resolve()
+_parent_candidates = [_current_path.parent, *_current_path.parents]
+_module_suffixes = (
+    Path("NIERModules"),
+    Path("NIER_langflow") / "NIERModules",
+    Path("NIER") / "NIERModules",
+)
+
+for parent in _parent_candidates:
+    for suffix in _module_suffixes:
+        candidate = parent / suffix
+        if candidate.exists() and candidate.is_dir():
+            _MODULE_CANDIDATES.append(candidate)
+
 for _candidate in _MODULE_CANDIDATES:
-    if _candidate.exists() and str(_candidate) not in sys.path:
-        sys.path.append(str(_candidate))
+    candidate_str = str(_candidate)
+    if candidate_str not in sys.path:
+        sys.path.append(candidate_str)
 
 try:  # pylint: disable=wrong-import-position
     from chroma_trep import TRepEmbedding  # type: ignore

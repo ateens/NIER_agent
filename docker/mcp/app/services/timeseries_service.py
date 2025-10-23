@@ -2,6 +2,8 @@ import math
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Sequence
 
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 from fastdtw import fastdtw
@@ -56,6 +58,49 @@ def build_station_context(
         "geo": {},
         "stats": {},
     }
+
+
+def _normalize_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        # treat as unix timestamp (seconds)
+        dt = datetime.fromtimestamp(value)
+    elif isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            raise ValueError("Timestamp value cannot be empty")
+
+        patterns = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+            "%Y/%m/%d",
+        ]
+
+        dt = None
+        for pattern in patterns:
+            try:
+                dt = datetime.strptime(candidate, pattern)
+                break
+            except ValueError:
+                continue
+
+        if dt is None:
+            try:
+                dt = datetime.fromisoformat(candidate)
+            except ValueError as exc:
+                raise ValueError(
+                    "Unsupported timestamp format. Expected ISO-like string."
+                ) from exc
+    else:
+        raise TypeError("Timestamp value must be str, datetime, or unix timestamp")
+
+    return dt
 
 
 def _handle_missing_values(values: Sequence[float], policy: str) -> np.ndarray:
@@ -244,6 +289,15 @@ def perform_timeseries_analysis(
     missing_value_policy: str = "zero",
 ) -> Dict[str, Any]:
     element = element.upper()
+    start_dt = _normalize_timestamp(start_time)
+    end_dt = _normalize_timestamp(end_time)
+
+    if start_dt > end_dt:
+        raise ValueError("start_time must be earlier than end_time")
+
+    start_time = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+    end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
     double_sequence = (
         settings.double_the_sequence if double_sequence is None else double_sequence
     )

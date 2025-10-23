@@ -1,6 +1,6 @@
 import math
 from functools import lru_cache
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,78 +10,15 @@ from config import Settings
 from internal.NIERModules.postgres_handler import fetch_data
 from internal.station_network import StationNetwork
 
+from .common import ensure_sequence, parse_series_values
+
 __all__ = [
-    "ensure_sequence",
-    "parse_series_values",
-    "coerce_value_payload",
     "select_related_stations",
     "build_station_context",
+    "sliding_fast_dtw",
+    "compute_similarity_metrics",
     "perform_timeseries_analysis",
-    "build_insight_payload",
-    "orchestrate_response",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Common sequence helpers
-# ---------------------------------------------------------------------------
-
-
-def ensure_sequence(values: Optional[Sequence[Any]]) -> List[Any]:
-    if values is None:
-        return []
-    if isinstance(values, list):
-        return values
-    return list(values)
-
-
-def parse_series_values(series: Optional[Dict[str, Any]]) -> List[float]:
-    """Convert a values payload (comma-separated string or iterable) into floats."""
-    if not series:
-        return []
-
-    raw_values = series.get("values")
-    if raw_values is None:
-        return []
-
-    if isinstance(raw_values, str):
-        tokens = [token.strip() for token in raw_values.split(",")]
-    else:
-        tokens = [token for token in ensure_sequence(raw_values)]
-
-    parsed: List[float] = []
-    for token in tokens:
-        if token in ("", None):
-            continue
-        try:
-            value = float(token)
-        except (TypeError, ValueError):
-            continue
-        if math.isclose(value, 999999.0):
-            value = math.nan
-        parsed.append(value)
-    return parsed
-
-
-def coerce_value_payload(values: Optional[Sequence[Any]]) -> List[float]:
-    """Normalize arbitrary value payloads into a float list for embedding generation."""
-    if values is None:
-        return []
-    normalized: List[float] = []
-    for item in values:
-        if isinstance(item, dict):
-            normalized.extend(parse_series_values(item))
-        else:
-            try:
-                normalized.append(float(item))
-            except (TypeError, ValueError):
-                continue
-    return normalized
-
-
-# ---------------------------------------------------------------------------
-# Station network helpers
-# ---------------------------------------------------------------------------
 
 
 @lru_cache(maxsize=1)
@@ -119,11 +56,6 @@ def build_station_context(
         "geo": {},
         "stats": {},
     }
-
-
-# ---------------------------------------------------------------------------
-# Time-series comparisons
-# ---------------------------------------------------------------------------
 
 
 def _handle_missing_values(values: Sequence[float], policy: str) -> np.ndarray:
@@ -294,11 +226,6 @@ def compute_similarity_metrics(
     }
 
 
-# ---------------------------------------------------------------------------
-# Tool-facing service functions
-# ---------------------------------------------------------------------------
-
-
 def perform_timeseries_analysis(
     settings: Settings,
     *,
@@ -425,104 +352,3 @@ def perform_timeseries_analysis(
             "comparison_metadata": comparison_metadata,
         },
     }
-
-
-def build_insight_payload(
-    values: Optional[Sequence[Any]] = None,
-    *,
-    element: Optional[str] = None,
-    collection: Optional[str] = None,
-    perform_embedding: bool = True,
-    perform_search: bool = True,
-    embedding: Optional[List[float]] = None,
-    device: Optional[str] = None,
-    top_k: int = 10,
-    filters: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {
-        "element": element,
-        "collection": collection,
-        "perform_embedding": perform_embedding,
-        "perform_search": perform_search,
-        "device": device or "cuda:0",
-        "top_k": top_k,
-    }
-
-    generated_embedding: Optional[List[float]] = embedding
-    if perform_embedding:
-        parsed_values = coerce_value_payload(values)
-        metadata["embedding_source"] = "generated" if parsed_values else "empty_input"
-        generated_embedding = []  # TODO: integrate actual T-Rep inference
-        metadata["input_value_count"] = len(parsed_values)
-    else:
-        metadata["embedding_source"] = "provided"
-        metadata["input_value_count"] = len(generated_embedding or [])
-
-    neighbors: List[Dict[str, Any]] = []
-    if perform_search:
-        metadata["search_filters"] = filters or {}
-        neighbors = []  # TODO: integrate Chroma/Vector DB search
-
-    return {
-        "embedding": generated_embedding,
-        "neighbors": neighbors,
-        "metadata": metadata,
-    }
-
-
-def orchestrate_response(
-    *,
-    response_type: Literal["analysis", "general", "log_only"] = "analysis",
-    query: Optional[Dict[str, Any]] = None,
-    raw_data: Optional[Dict[str, Any]] = None,
-    comparisons: Optional[Sequence[Dict[str, Any]]] = None,
-    neighbors: Optional[Sequence[Dict[str, Any]]] = None,
-    station_context: Optional[Dict[str, Any]] = None,
-    history: Optional[Sequence[Dict[str, str]]] = None,
-    messages: Optional[Sequence[Dict[str, str]]] = None,
-    model: str = "qwen3:8b",
-    temperature: float = 0.2,
-    log_stage: Optional[str] = None,
-    log_payload: Optional[Dict[str, Any]] = None,
-    latency_ms: Optional[float] = None,
-) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
-        "response_type": response_type,
-    }
-
-    log_entry: Optional[Dict[str, Any]] = None
-    if log_stage:
-        log_entry = {
-            "stage": log_stage,
-            "payload": log_payload or {},
-            "latency_ms": latency_ms,
-            "status": "logged",
-        }
-
-    answer = ""
-    if response_type == "general":
-        used_messages = list(messages or history or [])
-        metadata["history_length"] = len(used_messages)
-        answer = "일반 질의 응답이 여기에 표시됩니다."
-    elif response_type == "log_only":
-        answer = "로깅이 완료되었습니다."
-    else:
-        metadata.update(
-            {
-                "has_query": query is not None,
-                "has_raw_data": raw_data is not None,
-                "comparison_count": len(comparisons or []),
-                "neighbor_count": len(neighbors or []),
-                "has_context": station_context is not None,
-            }
-        )
-        answer = "타임 시리즈 분석 요약이 여기에 표시됩니다."
-
-    return {
-        "answer": answer,
-        "metadata": metadata,
-        "log": log_entry,
-    }
-

@@ -13,15 +13,11 @@ def orchestrate_response(
     station_context: Optional[Dict[str, Any]] = None,
     history: Optional[Sequence[Dict[str, str]]] = None,
     messages: Optional[Sequence[Dict[str, str]]] = None,
-    model: str = "qwen3:8b",
-    temperature: float = 0.2,
     log_stage: Optional[str] = None,
     log_payload: Optional[Dict[str, Any]] = None,
     latency_ms: Optional[float] = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
         "response_type": response_type,
     }
 
@@ -58,4 +54,3 @@ def orchestrate_response(
         "metadata": metadata,
         "log": log_entry,
     }
-

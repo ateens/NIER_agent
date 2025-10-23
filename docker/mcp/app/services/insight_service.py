@@ -6,7 +6,7 @@ import sys
 from functools import lru_cache
 from itertools import cycle
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -129,7 +129,7 @@ def _resolve_weight_path(model_dir: str, element: str) -> Path:
     )
 
 
-def _compose_documents(values: Optional[Sequence[Any]]) -> List[str]:
+def _compose_documents(values: Optional[List[Any]]) -> List[str]:
     documents: List[str] = []
     for entry in ensure_sequence(values):
         if isinstance(entry, dict):
@@ -262,7 +262,7 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def build_insight_payload(
-    values: Optional[Sequence[Any]] = None,
+    values: Optional[List[Any]] = None,
     *,
     element: Optional[str] = None,
     collection: Optional[str] = None,

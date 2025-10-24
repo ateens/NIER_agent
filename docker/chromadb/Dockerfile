@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY docker/chromadb/chroma_db/ /app/chroma_db/
 
 EXPOSE 8000
-CMD ["chroma", "run", "--path", "/app/chroma_db"]
+CMD ["chroma", "run", "--path", "/app/chroma_db", "--host", "0.0.0.0"]

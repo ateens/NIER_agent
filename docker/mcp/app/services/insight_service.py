@@ -14,6 +14,11 @@ try:  # Optional dependency, required when generating embeddings
 except ImportError:  # pragma: no cover - surface clear message later
     torch = None  # type: ignore
 
+try:  # NumPy is preferred for handling upstream vector formats
+    import numpy as np  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    np = None  # type: ignore
+
 from config import get_settings
 from vendor.modules.NIER.chroma_trep import TRepEmbedding  # type: ignore
 
@@ -104,10 +109,21 @@ def _resolve_weight_path(model_dir: str, element: str) -> Path:
 def _normalize_entries(values: Optional[Any]) -> List[Any]:
     if values is None:
         return []
+    if np is not None and isinstance(values, np.ndarray):
+        return _normalize_entries(values.tolist())
     if isinstance(values, dict):
         return [values]
     if isinstance(values, (list, tuple)):
-        return list(values)
+        sequence = list(values)
+        if not sequence:
+            return []
+        if all(
+            not isinstance(item, (dict, list, tuple))
+            and not (np is not None and isinstance(item, np.ndarray))
+            for item in sequence
+        ):
+            return [sequence]
+        return sequence
     return [values]
 
 
@@ -123,6 +139,12 @@ def _compose_documents(values: Optional[Any]) -> List[str]:
             documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
         elif isinstance(entry, str):
             documents.append(entry)
+        elif np is not None and isinstance(entry, np.ndarray):
+            floats = _coerce_float_sequence(entry)
+            if floats:
+                documents.append(
+                    ",".join("nan" if math.isnan(val) else str(val) for val in floats)
+                )
         elif isinstance(entry, (list, tuple)):
             floats: List[float] = []
             for val in entry:
@@ -231,18 +253,79 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
         first_documents,
         first_embeddings,
     ):
-        if hasattr(embed, "tolist"):
-            embed = embed.tolist()
+        cleaned_id = _sanitize_for_json(idx)
+        cleaned_metadata = _sanitize_for_json(metadata)
+        cleaned_distance = _sanitize_for_json(distance)
+        cleaned_document = _sanitize_for_json(document)
+        cleaned_embedding = _sanitize_for_json(embed)
         neighbors.append(
             {
-                "id": idx,
-                "distance": distance,
-                "metadata": metadata,
-                "document": document,
-                "embedding": embed,
+                "id": cleaned_id,
+                "distance": cleaned_distance,
+                "metadata": cleaned_metadata,
+                "document": cleaned_document,
+                "embedding": cleaned_embedding,
             }
         )
     return neighbors
+
+
+def _coerce_float_sequence(sequence: Any) -> List[float]:
+    if sequence is None:
+        return []
+    if np is not None and isinstance(sequence, (np.ndarray, np.generic)):
+        return _coerce_float_sequence(sequence.tolist())  # type: ignore[attr-defined]
+    if torch is not None and isinstance(sequence, torch.Tensor):
+        return _coerce_float_sequence(sequence.detach().cpu().tolist())
+    if hasattr(sequence, "tolist") and not isinstance(sequence, (list, tuple)):
+        return _coerce_float_sequence(sequence.tolist())
+    if isinstance(sequence, (list, tuple)):
+        result: List[float] = []
+        for item in sequence:
+            try:
+                value = float(item)
+            except (TypeError, ValueError):
+                logger.debug("Skipping non-numeric value in embedding payload: %s", item)
+                continue
+            if math.isnan(value):
+                value = float("nan")
+            result.append(value)
+        return result
+    try:
+        value = float(sequence)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("Expected a numeric sequence for embedding") from exc
+    if math.isnan(value):
+        value = float("nan")
+    return [value]
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        return value
+    if np is not None:
+        if isinstance(value, np.generic):
+            return _sanitize_for_json(value.item())
+        if isinstance(value, np.ndarray):
+            return [_sanitize_for_json(item) for item in value.tolist()]
+    if torch is not None and isinstance(value, torch.Tensor):
+        return _sanitize_for_json(value.detach().cpu().tolist())
+    if isinstance(value, dict):
+        return {str(key): _sanitize_for_json(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(item) for item in value]
+    if hasattr(value, "tolist"):
+        return _sanitize_for_json(value.tolist())
+    try:
+        return _sanitize_for_json(float(value))
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def build_insight_payload(
@@ -301,10 +384,7 @@ def build_insight_payload(
             raise RuntimeError("T-Rep embedding returned no results")
 
         first_embedding = trep_embeddings[0]
-        if hasattr(first_embedding, "tolist"):
-            generated_embedding = first_embedding.tolist()
-        else:
-            generated_embedding = list(first_embedding)
+        generated_embedding = _coerce_float_sequence(first_embedding)
         metadata.update(
             {
                 "embedding_source": "generated",
@@ -319,6 +399,7 @@ def build_insight_payload(
             raise ValueError(
                 "embedding must be provided when perform_embedding=False"
             )
+        generated_embedding = _coerce_float_sequence(generated_embedding)
         metadata.update(
             {
                 "embedding_source": "provided",
@@ -340,12 +421,15 @@ def build_insight_payload(
             where_filters = dict(filters or {})
             if element:
                 where_filters.setdefault("element", element.upper())
+            sanitized_filters = _sanitize_for_json(where_filters) or None
+            if sanitized_filters is not None and not isinstance(sanitized_filters, dict):
+                sanitized_filters = {"value": sanitized_filters}
             response = _query_chromadb(
                 base_url,
                 collection_id,
                 generated_embedding,
                 top_k=top_k or settings.vector_db_top_k,
-                filters=where_filters or None,
+                filters=sanitized_filters,
             )
             neighbors = _format_neighbors(response)
             metadata["returned_neighbors"] = len(neighbors)
@@ -357,7 +441,7 @@ def build_insight_payload(
             metadata["search_error"] = str(exc)
 
     return {
-        "embedding": generated_embedding,
-        "neighbors": neighbors,
-        "metadata": metadata,
+        "embedding": _sanitize_for_json(generated_embedding),
+        "neighbors": [_sanitize_for_json(item) for item in neighbors],
+        "metadata": _sanitize_for_json(metadata),
     }

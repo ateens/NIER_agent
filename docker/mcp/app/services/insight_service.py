@@ -300,7 +300,11 @@ def build_insight_payload(
         if not trep_embeddings:
             raise RuntimeError("T-Rep embedding returned no results")
 
-        generated_embedding = trep_embeddings[0]
+        first_embedding = trep_embeddings[0]
+        if hasattr(first_embedding, "tolist"):
+            generated_embedding = first_embedding.tolist()
+        else:
+            generated_embedding = list(first_embedding)
         metadata.update(
             {
                 "embedding_source": "generated",

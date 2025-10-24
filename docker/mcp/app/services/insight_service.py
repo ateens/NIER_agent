@@ -196,6 +196,33 @@ def _compose_base_url(host: str, port: str) -> str:
     return host
 
 
+def _normalize_collection_name(requested: Optional[Any], default: str) -> str:
+    if not requested:
+        return default
+    if not isinstance(requested, str):
+        requested = str(requested)
+    normalized = requested.strip()
+    if not normalized:
+        return default
+
+    alias_map = {
+        "trep": default,
+        "trep_collection": default,
+        "time_series_collection": default,
+        "time_series_collection_trep": default,
+    }
+    lowered = normalized.lower()
+    if lowered in alias_map:
+        alias_target = alias_map[lowered]
+        logger.debug(
+            "Collection alias '%s' resolved to '%s'",
+            normalized,
+            alias_target,
+        )
+        return alias_target
+    return normalized
+
+
 @lru_cache(maxsize=8)
 def _resolve_collection_id(base_url: str, collection_name: str) -> str:
     url = f"{base_url}/api/v1/collections"
@@ -345,10 +372,15 @@ def build_insight_payload(
     if perform_embedding and torch is None:
         raise RuntimeError("PyTorch is required for T-Rep embeddings. Install torch.")
 
+    effective_collection = _normalize_collection_name(
+        collection,
+        settings.vector_collection,
+    )
+
     metadata: Dict[str, Any] = {
         "perform_embedding": perform_embedding,
         "perform_search": perform_search,
-        "collection": collection or settings.vector_collection,
+        "collection": effective_collection,
         "vector_db_host": settings.vector_db_host,
         "vector_db_port": settings.vector_db_port,
         "top_k": top_k,
@@ -414,7 +446,7 @@ def build_insight_payload(
             raise ValueError("embedding vector required for vector search")
 
         base_url = _compose_base_url(settings.vector_db_host, settings.vector_db_port)
-        collection_name = collection or settings.vector_collection
+        collection_name = effective_collection
         try:
             collection_id = _resolve_collection_id(base_url, collection_name)
             metadata["collection_id"] = collection_id
@@ -424,6 +456,7 @@ def build_insight_payload(
             sanitized_filters = _sanitize_for_json(where_filters) or None
             if sanitized_filters is not None and not isinstance(sanitized_filters, dict):
                 sanitized_filters = {"value": sanitized_filters}
+            metadata["filters"] = sanitized_filters or {}
             response = _query_chromadb(
                 base_url,
                 collection_id,

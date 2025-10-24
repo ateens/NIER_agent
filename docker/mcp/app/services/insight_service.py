@@ -231,6 +231,8 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
         first_documents,
         first_embeddings,
     ):
+        if hasattr(embed, "tolist"):
+            embed = embed.tolist()
         neighbors.append(
             {
                 "id": idx,

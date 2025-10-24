@@ -1,0 +1,1 @@
+Shared writable data directory for LangFlow container.

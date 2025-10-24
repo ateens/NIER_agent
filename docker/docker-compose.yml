@@ -40,7 +40,7 @@ services:
       context: ..
       dockerfile: docker/mcp/Dockerfile
     environment:
-      - NIER_STATION_SIMILARITY_PATH=/app/data/similarity_results_v2.pkl
+      - NIER_STATION_SIMILARITY_PATH=/app/vendor/assets/similarity_results_v2.pkl
     env_file:
       - ../.env.langflow
     extra_hosts:
@@ -48,7 +48,6 @@ services:
     volumes:
       - ../docker/mcp/app:/app
       - ../models:/app/models
-      - ../data:/app/data
     ports:
       - "9999:9999"
 
@@ -68,7 +67,7 @@ services:
       - ../docker/langflow/flows:/app/flows
       - ../docker/langflow/custom_nodes:/app/custom_nodes
       - ../models:/app/models
-      - ../data:/app/data
+      - ../docker/langflow/data:/app/data
       - ../docker/langflow/storage:/app/storage 
     ports:
       - "7860:7860"

@@ -17,6 +17,7 @@ pandas==2.2.2
 fastdtw==0.3.4
 haversine==2.8.1
 sympy==1.11.1
+psutil==5.9.8
 
 # Vector DB / Ollama wrappers
 chromadb==0.5.18

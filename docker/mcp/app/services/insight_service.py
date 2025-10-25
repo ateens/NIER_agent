@@ -304,6 +304,45 @@ def _normalize_filter_payload(filters: Optional[Dict[str, Any]]) -> Optional[Dic
     return normalized
 
 
+def _contains_operator(mapping: Dict[Any, Any]) -> bool:
+    return any(str(k).startswith("$") for k in mapping.keys())
+
+
+def _build_condition(key: str, value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        if _contains_operator(value):
+            return {key: value}
+        # Convert nested dict into equality on JSON string representation to avoid ambiguity
+        return {key: {"$eq": json.dumps(value, sort_keys=True)}}
+    if isinstance(value, list):
+        cleaned: List[Any] = [item for item in value if item is not None]
+        if not cleaned:
+            return None
+        return {key: {"$in": cleaned}}
+    return {key: {"$eq": value}}
+
+
+def _to_chroma_where(filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not filters:
+        return None
+    if _contains_operator(filters):
+        return filters
+
+    conditions: List[Dict[str, Any]] = []
+    for key, value in filters.items():
+        condition = _build_condition(key, value)
+        if condition:
+            conditions.append(condition)
+
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
+
+
 @lru_cache(maxsize=8)
 def _resolve_collection_id(base_url: str, collection_name: str) -> str:
     url = f"{base_url}/api/v1/collections"
@@ -542,13 +581,19 @@ def build_insight_payload(
                 if isinstance(sanitized_filters, dict)
                 else sanitized_filters
             )
+            where_clause = (
+                _to_chroma_where(normalized_filters)
+                if isinstance(normalized_filters, dict)
+                else None
+            )
             metadata["filters"] = normalized_filters or {}
+            metadata["where_clause"] = where_clause or {}
             response = _query_chromadb(
                 base_url,
                 collection_id,
                 generated_embedding,
                 top_k=top_k or settings.vector_db_top_k,
-                filters=normalized_filters,
+                filters=where_clause,
             )
             neighbors = _format_neighbors(response)
             metadata["returned_neighbors"] = len(neighbors)

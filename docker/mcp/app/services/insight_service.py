@@ -30,6 +30,26 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["build_insight_payload"]
 
+_FILTER_KEY_ALIASES: Dict[str, str] = {
+    "station_id": "region",
+    "station": "region",
+    "region": "region",
+    "element": "element",
+    "class": "class",
+    "start_time": "original_start",
+    "end_time": "original_end",
+    "original_start": "original_start",
+    "original_end": "original_end",
+    "start": "original_start",
+    "end": "original_end",
+    "period_start": "original_start",
+    "period_end": "original_end",
+    "from_time": "original_start",
+    "to_time": "original_end",
+    "begin_time": "original_start",
+    "finish_time": "original_end",
+}
+
 
 def _sanitize_device(device: str) -> str:
     device = (device or "").strip() or "cpu"
@@ -304,6 +324,12 @@ def _normalize_filter_payload(filters: Optional[Dict[str, Any]]) -> Optional[Dic
     return normalized
 
 
+def _resolve_filter_key(raw_key: Any) -> str:
+    key = str(raw_key).strip()
+    alias = _FILTER_KEY_ALIASES.get(key.lower())
+    return alias or key
+
+
 def _contains_operator(mapping: Dict[Any, Any]) -> bool:
     return any(str(k).startswith("$") for k in mapping.keys())
 
@@ -311,17 +337,20 @@ def _contains_operator(mapping: Dict[Any, Any]) -> bool:
 def _build_condition(key: str, value: Any) -> Optional[Dict[str, Any]]:
     if value is None:
         return None
+    resolved_key = _resolve_filter_key(key)
     if isinstance(value, dict):
         if _contains_operator(value):
-            return {key: value}
+            return {resolved_key: value}
         # Convert nested dict into equality on JSON string representation to avoid ambiguity
-        return {key: {"$eq": json.dumps(value, sort_keys=True)}}
+        return {resolved_key: {"$eq": json.dumps(value, sort_keys=True)}}
     if isinstance(value, list):
         cleaned: List[Any] = [item for item in value if item is not None]
         if not cleaned:
             return None
-        return {key: {"$in": cleaned}}
-    return {key: {"$eq": value}}
+        if len(cleaned) == 1:
+            return {resolved_key: {"$eq": cleaned[0]}}
+        return {resolved_key: {"$in": cleaned}}
+    return {resolved_key: {"$eq": value}}
 
 
 def _to_chroma_where(filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -588,15 +617,53 @@ def build_insight_payload(
             )
             metadata["filters"] = normalized_filters or {}
             metadata["where_clause"] = where_clause or {}
-            response = _query_chromadb(
-                base_url,
-                collection_id,
-                generated_embedding,
-                top_k=top_k or settings.vector_db_top_k,
-                filters=where_clause,
-            )
-            neighbors = _format_neighbors(response)
-            metadata["returned_neighbors"] = len(neighbors)
+
+            def _run_query(active_filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                response = _query_chromadb(
+                    base_url,
+                    collection_id,
+                    generated_embedding,
+                    top_k=top_k or settings.vector_db_top_k,
+                    filters=active_filters,
+                )
+                return _format_neighbors(response)
+
+            primary_error: Optional[str] = None
+            try:
+                neighbors = _run_query(where_clause)
+                metadata["returned_neighbors"] = len(neighbors)
+            except requests.RequestException as exc:
+                primary_error = str(exc)
+                metadata["search_error"] = primary_error
+                neighbors = []
+            except RuntimeError as exc:
+                primary_error = str(exc)
+                metadata["search_error"] = primary_error
+                neighbors = []
+
+            if (not neighbors or primary_error) and isinstance(normalized_filters, dict):
+                element_filter = normalized_filters.get("element")
+                if isinstance(element_filter, dict) and "$eq" in element_filter:
+                    element_filter = element_filter["$eq"]
+                fallback_source: Dict[str, Any] = {}
+                if element_filter:
+                    fallback_source["element"] = element_filter
+                fallback_where = _to_chroma_where(fallback_source) if fallback_source else None
+                if fallback_where != where_clause:
+                    metadata["fallback_filters"] = fallback_source
+                    metadata["fallback_where_clause"] = fallback_where or {}
+                    try:
+                        fallback_neighbors = _run_query(fallback_where)
+                        if fallback_neighbors:
+                            neighbors = fallback_neighbors
+                            metadata["returned_neighbors"] = len(neighbors)
+                            if primary_error:
+                                metadata["search_error_primary"] = primary_error
+                                metadata.pop("search_error", None)
+                    except requests.RequestException as exc:
+                        metadata["fallback_error"] = str(exc)
+                    except RuntimeError as exc:
+                        metadata["fallback_error"] = str(exc)
         except requests.RequestException as exc:
             logger.error("Failed to query ChromaDB: %s", exc)
             metadata["search_error"] = str(exc)

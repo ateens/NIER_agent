@@ -224,7 +224,7 @@ def _normalize_collection_name(requested: Optional[Any], default: str) -> str:
     return normalized
 
 
-def _normalize_timestamp_string(value: Any) -> Any:
+def _normalize_timestamp_string(value: Any, *, is_end: bool = False) -> Any:
     if value is None:
         return value
     if isinstance(value, str):
@@ -241,9 +241,13 @@ def _normalize_timestamp_string(value: Any) -> Any:
             try:
                 dt = datetime.strptime(candidate, pattern)
                 if pattern == "%Y-%m-%d":
-                    dt = dt.replace(hour=0, minute=0, second=0)
+                    dt = dt.replace(
+                        hour=23 if is_end else 0,
+                        minute=59 if is_end else 0,
+                        second=59 if is_end else 0,
+                    )
                 elif pattern == "%Y-%m-%d %H:%M":
-                    dt = dt.replace(second=0)
+                    dt = dt.replace(second=59 if is_end else 0)
                 return dt.strftime("%Y-%m-%d %H:%M:%S")
             except ValueError:
                 continue
@@ -257,29 +261,44 @@ def _normalize_filter_payload(filters: Optional[Dict[str, Any]]) -> Optional[Dic
     normalized: Dict[str, Any] = {}
     time_keys = {
         "start_time",
-        "end_time",
         "original_start",
-        "original_end",
         "period_start",
+        "from_time",
+        "begin_time",
+    }
+    end_time_keys = {
+        "end_time",
+        "original_end",
         "period_end",
+        "to_time",
+        "finish_time",
     }
     for key, value in filters.items():
+        is_end_key = key in end_time_keys or key.endswith("_end")
+        is_start_key = key in time_keys or key.endswith("_start")
         if isinstance(value, dict):
             normalized[key] = _normalize_filter_payload(value)  # type: ignore[assignment]
             continue
         if isinstance(value, list):
             normalized_list: List[Any] = []
             for item in value:
-                if key in time_keys:
-                    normalized_list.append(_normalize_timestamp_string(item))
+                if is_end_key or is_start_key:
+                    normalized_list.append(
+                        _normalize_timestamp_string(
+                            item,
+                            is_end=is_end_key and not is_start_key,
+                        )
+                    )
                 elif isinstance(item, dict):
                     normalized_list.append(_normalize_filter_payload(item))
                 else:
                     normalized_list.append(item)
             normalized[key] = normalized_list
             continue
-        if key in time_keys:
-            normalized[key] = _normalize_timestamp_string(value)
+        if is_end_key:
+            normalized[key] = _normalize_timestamp_string(value, is_end=True)
+        elif is_start_key:
+            normalized[key] = _normalize_timestamp_string(value, is_end=False)
         else:
             normalized[key] = value
     return normalized

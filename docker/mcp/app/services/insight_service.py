@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from itertools import cycle
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 import requests
 
@@ -220,6 +221,67 @@ def _normalize_collection_name(requested: Optional[Any], default: str) -> str:
             alias_target,
         )
         return alias_target
+    return normalized
+
+
+def _normalize_timestamp_string(value: Any) -> Any:
+    if value is None:
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return candidate
+        candidate = candidate.replace("T", " ")
+        patterns = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+        ]
+        for pattern in patterns:
+            try:
+                dt = datetime.strptime(candidate, pattern)
+                if pattern == "%Y-%m-%d":
+                    dt = dt.replace(hour=0, minute=0, second=0)
+                elif pattern == "%Y-%m-%d %H:%M":
+                    dt = dt.replace(second=0)
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+        return candidate
+    return value
+
+
+def _normalize_filter_payload(filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not filters:
+        return filters
+    normalized: Dict[str, Any] = {}
+    time_keys = {
+        "start_time",
+        "end_time",
+        "original_start",
+        "original_end",
+        "period_start",
+        "period_end",
+    }
+    for key, value in filters.items():
+        if isinstance(value, dict):
+            normalized[key] = _normalize_filter_payload(value)  # type: ignore[assignment]
+            continue
+        if isinstance(value, list):
+            normalized_list: List[Any] = []
+            for item in value:
+                if key in time_keys:
+                    normalized_list.append(_normalize_timestamp_string(item))
+                elif isinstance(item, dict):
+                    normalized_list.append(_normalize_filter_payload(item))
+                else:
+                    normalized_list.append(item)
+            normalized[key] = normalized_list
+            continue
+        if key in time_keys:
+            normalized[key] = _normalize_timestamp_string(value)
+        else:
+            normalized[key] = value
     return normalized
 
 
@@ -456,13 +518,18 @@ def build_insight_payload(
             sanitized_filters = _sanitize_for_json(where_filters) or None
             if sanitized_filters is not None and not isinstance(sanitized_filters, dict):
                 sanitized_filters = {"value": sanitized_filters}
-            metadata["filters"] = sanitized_filters or {}
+            normalized_filters = (
+                _normalize_filter_payload(sanitized_filters)
+                if isinstance(sanitized_filters, dict)
+                else sanitized_filters
+            )
+            metadata["filters"] = normalized_filters or {}
             response = _query_chromadb(
                 base_url,
                 collection_id,
                 generated_embedding,
                 top_k=top_k or settings.vector_db_top_k,
-                filters=sanitized_filters,
+                filters=normalized_filters,
             )
             neighbors = _format_neighbors(response)
             metadata["returned_neighbors"] = len(neighbors)

@@ -10,6 +10,7 @@ from fastdtw import fastdtw
 
 from config import Settings
 from vendor.modules.NIER.postgres_handler import fetch_data
+from internal.analysis_cache import cache_series_payload
 from .station_network import StationNetwork
 
 from .common import ensure_sequence, parse_series_values
@@ -385,6 +386,47 @@ def perform_timeseries_analysis(
         comparison_summary = similarity_output["summary"]
         comparison_metadata = similarity_output["metadata"]
 
+    original_values_raw = original_data.get("values", "")
+    try:
+        original_value_count = len(parse_series_values({"values": original_values_raw}))
+    except Exception:  # pragma: no cover - defensive
+        original_value_count = 0
+    value_preview = []
+    if isinstance(original_values_raw, str) and original_values_raw:
+        value_preview = [
+            token
+            for token in (original_values_raw.split(",")[:6])
+            if token not in ("", None)
+        ]
+
+    cache_key = cache_series_payload(
+        {
+            "region": original_data.get("region"),
+            "element": original_data.get("element"),
+            "start_time": original_data.get("start_time"),
+            "end_time": original_data.get("end_time"),
+            "values": original_values_raw,
+        }
+    )
+    original_data["cache_key"] = cache_key
+    original_data["values"] = None
+    original_data["value_preview"] = value_preview
+    original_data["value_count"] = original_value_count
+
+    metadata = {
+        "double_sequence": double_sequence,
+        "additional_days": additional_days,
+        "include_related": include_related,
+        "include_context": include_context,
+        "compute_similarity": compute_similarity,
+        "comparison_type": comparison_type,
+        "window_size": window_size,
+        "missing_value_policy": missing_value_policy,
+        "comparison_metadata": comparison_metadata,
+        "analysis_cache_key": cache_key,
+        "analysis_value_count": original_value_count,
+    }
+
     return {
         "query": query,
         "original": original_data,
@@ -394,15 +436,5 @@ def perform_timeseries_analysis(
         "context": context_payload,
         "comparisons": similarity_payload,
         "comparison_summary": comparison_summary,
-        "metadata": {
-            "double_sequence": double_sequence,
-            "additional_days": additional_days,
-            "include_related": include_related,
-            "include_context": include_context,
-            "compute_similarity": compute_similarity,
-            "comparison_type": comparison_type,
-            "window_size": window_size,
-            "missing_value_policy": missing_value_policy,
-            "comparison_metadata": comparison_metadata,
-        },
+        "metadata": metadata,
     }

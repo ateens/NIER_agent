@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from config import get_settings
 from vendor.modules.NIER.chroma_trep import TRepEmbedding  # type: ignore
+from internal.analysis_cache import load_series_payload
 
 from .common import parse_series_values
 
@@ -152,11 +153,24 @@ def _compose_documents(values: Optional[Any]) -> List[str]:
     documents: List[str] = []
     for entry in _normalize_entries(values):
         if isinstance(entry, dict):
+            cache_key = (
+                entry.get("cache_key")
+                or entry.get("analysis_cache_key")
+                or entry.get("series_cache_key")
+            )
             raw = entry.get("values")
+            if cache_key:
+                try:
+                    cached_payload = load_series_payload(str(cache_key))
+                except KeyError as exc:  # pragma: no cover - surface to caller
+                    raise RuntimeError(
+                        f"Cached time-series payload not found for key {cache_key}"
+                    ) from exc
+                raw = cached_payload.get("values") or raw
             if isinstance(raw, str) and raw.strip():
                 documents.append(raw)
                 continue
-            floats = parse_series_values(entry)
+            floats = parse_series_values(entry if raw is None else {"values": raw})
             documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
         elif isinstance(entry, str):
             documents.append(entry)

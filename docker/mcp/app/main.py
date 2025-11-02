@@ -6,7 +6,6 @@ from tools import register_all_tools
 mcp = FastMCP("nier_analyzer")
 register_all_tools(mcp)
 
-
 @mcp.custom_route("/", methods=["GET"])
 async def manifest(_request):
     """Expose MCP manifest for LangFlow discovery."""

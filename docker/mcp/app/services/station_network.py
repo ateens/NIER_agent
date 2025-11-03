@@ -66,3 +66,39 @@ class StationNetwork:
             return []
 
         return list(element_map[element].keys())
+
+    def get_similarity_stats(
+        self,
+        station_a: int,
+        station_b: int,
+        element: str,
+        window_size: int,
+    ) -> Optional[Dict[str, float]]:
+        """Return baseline FastDTW statistics for a station pair."""
+        try:
+            station_a = int(station_a)
+            station_b = int(station_b)
+        except (TypeError, ValueError):
+            return None
+
+        element = element.upper()
+        window_suffix = f"{int(window_size)}h"
+        avg_key = f"avg_dist_{window_suffix}"
+        std_key = f"sd_{window_suffix}"
+
+        station_payload = self._groups.get(station_a, {})
+        element_payload = station_payload.get(element)
+        if not element_payload:
+            return None
+
+        pair_stats = element_payload.get(station_b)
+        if not pair_stats:
+            return None
+
+        if avg_key not in pair_stats or std_key not in pair_stats:
+            return None
+
+        return {
+            "baseline_mean": float(pair_stats[avg_key]),
+            "baseline_std": float(pair_stats[std_key]),
+        }

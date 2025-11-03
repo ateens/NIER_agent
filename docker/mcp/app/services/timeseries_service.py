@@ -225,6 +225,9 @@ def compute_similarity_metrics(
 
     comparisons: List[Dict[str, Any]] = []
     distances: List[Optional[float]] = []
+    base_station = _safe_station_id(original_series.get("region"))
+    element = (original_series.get("element") or "").upper()
+    station_network = _get_station_network()
 
     for item in related_series:
         target_station = _safe_station_id(item.get("region") or item.get("station_id"))
@@ -237,6 +240,10 @@ def compute_similarity_metrics(
                     "label": "insufficient_data",
                     "comparison_type": comparison_type,
                     "series_length": 0,
+                    "baseline_mean": None,
+                    "baseline_std": None,
+                    "z_score": None,
+                    "confidence": None,
                 }
             )
             distances.append(None)
@@ -248,6 +255,32 @@ def compute_similarity_metrics(
             window_size=window_size,
             missing_value_policy=missing_value_policy,
         )
+        baseline_mean: Optional[float] = None
+        baseline_std: Optional[float] = None
+        z_score: Optional[float] = None
+        confidence: Optional[float] = None
+
+        if (
+            distance is not None
+            and base_station is not None
+            and target_station is not None
+        ):
+            stats = station_network.get_similarity_stats(
+                station_a=base_station,
+                station_b=target_station,
+                element=element,
+                window_size=window_size,
+            )
+            if stats:
+                baseline_mean = stats.get("baseline_mean")
+                baseline_std = stats.get("baseline_std")
+                if (
+                    baseline_mean is not None
+                    and baseline_std is not None
+                    and not math.isclose(baseline_std, 0.0)
+                ):
+                    z_score = float((distance - baseline_mean) / baseline_std)
+                    confidence = max(0.0, 1.0 - abs(z_score) / 3.0)
         distances.append(distance)
         comparisons.append(
             {
@@ -256,6 +289,10 @@ def compute_similarity_metrics(
                 "label": "pending",
                 "comparison_type": comparison_type,
                 "series_length": len(related_values),
+                "baseline_mean": baseline_mean,
+                "baseline_std": baseline_std,
+                "z_score": z_score,
+                "confidence": confidence,
             }
         )
 

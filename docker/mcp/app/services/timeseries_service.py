@@ -13,7 +13,7 @@ from vendor.modules.NIER.postgres_handler import fetch_data
 from internal.analysis_cache import cache_series_payload
 from .station_network import StationNetwork
 
-from .common import ensure_sequence, parse_series_values
+from .common import ensure_sequence
 
 __all__ = [
     "select_related_stations",
@@ -133,6 +133,11 @@ def sliding_fast_dtw(
     y = _handle_missing_values(y_values, missing_value_policy)
 
     n = min(len(x), len(y))
+
+    # temporal test
+    x = x[:n]
+    y = y[:n]
+
     if n == 0:
         return None
 
@@ -211,7 +216,75 @@ def compute_similarity_metrics(
     window_size: int,
     missing_value_policy: str,
 ) -> Dict[str, Any]:
-    base_values = parse_series_values(original_series)
+    def _legacy_str_to_float_list(values_str: str) -> List[float]:
+        return [float(val) for val in values_str.split(",")]
+
+    def _legacy_parse_series(series: Dict[str, Any]) -> List[float]:
+        raw = series.get("values", [])
+        if isinstance(raw, str):
+            values_iter = _legacy_str_to_float_list(raw)
+        elif isinstance(raw, Sequence):
+            values_iter = [float(item) for item in raw]
+        else:
+            raise ValueError("Unsupported values payload")
+
+        parsed_values: List[float] = []
+        for value in values_iter:
+            if math.isclose(value, 999999.0):
+                parsed_values.append(math.nan)
+            else:
+                parsed_values.append(float(value))
+        return parsed_values
+
+    def _legacy_handle_missing(values: Sequence[float], policy: str) -> np.ndarray:
+        array = np.asarray(values, dtype=float)
+        if policy == "mean":
+            return np.nan_to_num(array, nan=np.nanmean(array))
+        if policy == "interpolate":
+            series = pd.Series(array)
+            interpolated = series.interpolate(method="linear", limit_direction="both")
+            return interpolated.to_numpy()
+        return np.nan_to_num(array, nan=0.0)
+
+    def _legacy_sliding_fast_dtw(
+        x_vals: Sequence[float],
+        y_vals: Sequence[float],
+        *,
+        win_size: int,
+        policy: str,
+    ) -> float:
+        x_array = _legacy_handle_missing(x_vals, policy)
+        y_array = _legacy_handle_missing(y_vals, policy)
+        n = min(len(x_array), len(y_array))
+        if n < win_size:
+            raise ValueError("Time-series length must be greater than or equal to window size (w).")
+
+        x_array = x_array[:n]
+        y_array = y_array[:n]
+        distances_local: List[float] = []
+        for start in range(0, n - win_size + 1, win_size):
+            x_window = x_array[start : start + win_size]
+            y_window = y_array[start : start + win_size]
+            distance, _ = fastdtw(x_window, y_window)
+            distances_local.append(float(distance))
+
+        if not distances_local:
+            raise ValueError("Insufficient window slices for DTW comparison.")
+        return float(np.mean(distances_local))
+
+    try:
+        base_values = _legacy_parse_series(original_series)
+    except Exception:
+        return {
+            "results": [],
+            "summary": None,
+            "metadata": {
+                "reason": "original_series_empty",
+                "window_size": window_size,
+                "missing_value_policy": missing_value_policy,
+            },
+        }
+
     if not base_values:
         return {
             "results": [],
@@ -231,40 +304,30 @@ def compute_similarity_metrics(
 
     for item in related_series:
         target_station = _safe_station_id(item.get("region") or item.get("station_id"))
-        related_values = parse_series_values(item)
-        if not related_values:
-            comparisons.append(
-                {
-                    "station_id": target_station,
-                    "distance": None,
-                    "label": "insufficient_data",
-                    "comparison_type": comparison_type,
-                    "series_length": 0,
-                    "baseline_mean": None,
-                    "baseline_std": None,
-                    "z_score": None,
-                    "confidence": None,
-                }
-            )
-            distances.append(None)
+        try:
+            related_values = _legacy_parse_series(item)
+        except Exception:
             continue
 
-        distance = sliding_fast_dtw(
-            base_values,
-            related_values,
-            window_size=window_size,
-            missing_value_policy=missing_value_policy,
-        )
+        if not related_values:
+            continue
+
+        try:
+            distance = _legacy_sliding_fast_dtw(
+                base_values,
+                related_values,
+                win_size=window_size,
+                policy=missing_value_policy,
+            )
+        except Exception:
+            continue
+
         baseline_mean: Optional[float] = None
         baseline_std: Optional[float] = None
         z_score: Optional[float] = None
         confidence: Optional[float] = None
 
-        if (
-            distance is not None
-            and base_station is not None
-            and target_station is not None
-        ):
+        if base_station is not None and target_station is not None:
             stats = station_network.get_similarity_stats(
                 station_a=base_station,
                 station_b=target_station,
@@ -281,14 +344,15 @@ def compute_similarity_metrics(
                 ):
                     z_score = float((distance - baseline_mean) / baseline_std)
                     confidence = max(0.0, 1.0 - abs(z_score) / 3.0)
+
         distances.append(distance)
         comparisons.append(
             {
                 "station_id": target_station,
-                "distance": float(distance) if distance is not None else None,
+                "distance": float(distance),
                 "label": "pending",
                 "comparison_type": comparison_type,
-                "series_length": len(related_values),
+                "series_length": min(len(base_values), len(related_values)),
                 "baseline_mean": baseline_mean,
                 "baseline_std": baseline_std,
                 "z_score": z_score,

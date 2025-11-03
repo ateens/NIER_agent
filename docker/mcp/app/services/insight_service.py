@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from config import get_settings
 from vendor.modules.NIER.chroma_trep import TRepEmbedding  # type: ignore
-from internal.analysis_cache import load_series_payload
+from internal.analysis_cache import load_series_payload, cache_series_payload
 
 from .common import parse_series_values
 
@@ -167,34 +167,31 @@ def _compose_documents(values: Optional[Any]) -> List[str]:
                         f"Cached time-series payload not found for key {cache_key}"
                     ) from exc
                 raw = cached_payload.get("values") or raw
-            if isinstance(raw, str) and raw.strip():
-                documents.append(raw)
-                continue
-            floats = parse_series_values(entry if raw is None else {"values": raw})
+            elif raw:
+                raise ValueError(
+                    "values 입력은 지원되지 않습니다. timeseries_analysis 결과의 cache_key를 사용하세요."
+                )
+            else:
+                raise ValueError(
+                    "cache_key가 누락되었습니다. 먼저 timeseries_analysis를 호출해 cache_key를 확보하세요."
+                )
+
+            floats = parse_series_values({"values": raw})
             documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
         elif isinstance(entry, str):
-            documents.append(entry)
+            raise ValueError(
+                "직접 문자열 시계열을 입력할 수 없습니다. cache_key를 이용해 주세요."
+            )
         elif np is not None and isinstance(entry, np.ndarray):
-            floats = _coerce_float_sequence(entry)
-            if floats:
-                documents.append(
-                    ",".join("nan" if math.isnan(val) else str(val) for val in floats)
-                )
+            raise ValueError(
+                "numpy.ndarray 입력은 지원되지 않습니다. cache_key를 이용해 주세요."
+            )
         elif isinstance(entry, (list, tuple)):
-            floats: List[float] = []
-            for val in entry:
-                try:
-                    floats.append(float(val))
-                except (TypeError, ValueError):
-                    logger.debug("Skipping non-numeric value in list entry: %s", val)
-            if floats:
-                documents.append(",".join("nan" if math.isnan(val) else str(val) for val in floats))
+            raise ValueError(
+                "리스트 기반 values 입력은 허용되지 않습니다. cache_key를 사용하세요."
+            )
         else:
-            try:
-                value = float(entry)
-                documents.append(str(value))
-            except (TypeError, ValueError):
-                logger.debug("Skipping unsupported value type in documents: %s", entry)
+            logger.debug("Skipping unsupported value type in documents: %s", entry)
     return documents
 
 
@@ -446,17 +443,15 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
         cleaned_id = _sanitize_for_json(idx)
         cleaned_metadata = _sanitize_for_json(metadata)
         cleaned_distance = _sanitize_for_json(distance)
-        cleaned_document = _sanitize_for_json(document)
-        cleaned_embedding = _sanitize_for_json(embed)
-        neighbors.append(
-            {
-                "id": cleaned_id,
-                "distance": cleaned_distance,
-                "metadata": cleaned_metadata,
-                "document": cleaned_document,
-                "embedding": cleaned_embedding,
-            }
-        )
+        if isinstance(cleaned_metadata, dict):
+            cleaned_metadata.pop("values", None)
+            cleaned_metadata.pop("document", None)
+        neighbor_payload = {
+            "id": cleaned_id,
+            "distance": cleaned_distance,
+            "metadata": cleaned_metadata,
+        }
+        neighbors.append(neighbor_payload)
     return neighbors
 
 
@@ -551,7 +546,8 @@ def build_insight_payload(
         "element": element,
     }
 
-    generated_embedding: Optional[List[float]] = embedding
+    embedding_vector: Optional[List[float]] = embedding
+    embedding_cache_key: Optional[str] = None
 
     if perform_embedding:
         documents = _compose_documents(values)
@@ -579,33 +575,55 @@ def build_insight_payload(
             raise RuntimeError("T-Rep embedding returned no results")
 
         first_embedding = trep_embeddings[0]
-        generated_embedding = _coerce_float_sequence(first_embedding)
+        embedding_vector = _coerce_float_sequence(first_embedding)
+        embedding_cache_key = cache_series_payload(
+            {
+                "type": "embedding",
+                "element": target_element,
+                "vector": embedding_vector,
+            }
+        )
         metadata.update(
             {
                 "embedding_source": "generated",
                 "input_value_count": len(_normalize_entries(values)),
                 "trep_device": resolved_device,
                 "trep_model_path": str(weight_path),
-                "embedding_dim": len(generated_embedding),
+                "embedding_dim": len(embedding_vector),
             }
         )
     else:
-        if generated_embedding is None:
+        if isinstance(embedding_vector, str):
+            cached_payload = load_series_payload(embedding_vector)
+            embedding_cache_key = embedding_vector
+            embedding_vector = _coerce_float_sequence(
+                cached_payload.get("vector")
+                or cached_payload.get("embedding")
+            )
+        if embedding_vector is None:
             raise ValueError(
                 "embedding must be provided when perform_embedding=False"
             )
-        generated_embedding = _coerce_float_sequence(generated_embedding)
+        embedding_vector = _coerce_float_sequence(embedding_vector)
+        if embedding_cache_key is None:
+            embedding_cache_key = cache_series_payload(
+                {
+                    "type": "embedding",
+                    "element": (element or "UNKNOWN").upper(),
+                    "vector": embedding_vector,
+                }
+            )
         metadata.update(
             {
                 "embedding_source": "provided",
-                "input_value_count": len(generated_embedding),
-                "embedding_dim": len(generated_embedding),
+                "input_value_count": len(embedding_vector),
+                "embedding_dim": len(embedding_vector),
             }
         )
 
     neighbors: List[Dict[str, Any]] = []
     if perform_search:
-        if generated_embedding is None:
+        if embedding_vector is None:
             raise ValueError("embedding vector required for vector search")
 
         base_url = _compose_base_url(settings.vector_db_host, settings.vector_db_port)
@@ -636,7 +654,7 @@ def build_insight_payload(
                 response = _query_chromadb(
                     base_url,
                     collection_id,
-                    generated_embedding,
+                    embedding_vector,
                     top_k=top_k or settings.vector_db_top_k,
                     filters=active_filters,
                 )
@@ -685,8 +703,19 @@ def build_insight_payload(
             logger.error("ChromaDB error: %s", exc)
             metadata["search_error"] = str(exc)
 
+    if embedding_cache_key is None and embedding_vector is not None:
+        embedding_cache_key = cache_series_payload(
+            {
+                "type": "embedding",
+                "element": (element or "UNKNOWN").upper(),
+                "vector": embedding_vector,
+            }
+        )
+
+    metadata["embedding_cache_key"] = embedding_cache_key
+
     return {
-        "embedding": _sanitize_for_json(generated_embedding),
+        "embedding_cache_key": embedding_cache_key,
         "neighbors": [_sanitize_for_json(item) for item in neighbors],
         "metadata": _sanitize_for_json(metadata),
     }

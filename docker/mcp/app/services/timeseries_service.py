@@ -391,13 +391,6 @@ def perform_timeseries_analysis(
         original_value_count = len(parse_series_values({"values": original_values_raw}))
     except Exception:  # pragma: no cover - defensive
         original_value_count = 0
-    value_preview = []
-    if isinstance(original_values_raw, str) and original_values_raw:
-        value_preview = [
-            token
-            for token in (original_values_raw.split(",")[:6])
-            if token not in ("", None)
-        ]
 
     cache_key = cache_series_payload(
         {
@@ -409,9 +402,27 @@ def perform_timeseries_analysis(
         }
     )
     original_data["cache_key"] = cache_key
-    original_data["values"] = None
-    original_data["value_preview"] = value_preview
+    original_data.pop("values", None)
     original_data["value_count"] = original_value_count
+
+    for station_data in related_results:
+        raw_related = station_data.get("values", "")
+        try:
+            related_value_count = len(parse_series_values({"values": raw_related}))
+        except Exception:  # pragma: no cover - defensive
+            related_value_count = 0
+        related_cache_key = cache_series_payload(
+            {
+                "region": station_data.get("region"),
+                "element": station_data.get("element"),
+                "start_time": station_data.get("start_time"),
+                "end_time": station_data.get("end_time"),
+                "values": raw_related,
+            }
+        )
+        station_data["cache_key"] = related_cache_key
+        station_data.pop("values", None)
+        station_data["value_count"] = related_value_count
 
     metadata = {
         "double_sequence": double_sequence,

@@ -13,7 +13,7 @@ from vendor.modules.NIER.postgres_handler import fetch_data
 from internal.analysis_cache import cache_series_payload
 from .station_network import StationNetwork
 
-from .common import ensure_sequence
+from .common import ensure_sequence, parse_series_values
 
 __all__ = [
     "select_related_stations",

@@ -26,6 +26,7 @@ class Settings:
     vector_db_port: str
     vector_collection: str
     vector_db_top_k: int
+    vector_db_prefilter_top_k: int
     trep_model_dir: str
 
 
@@ -41,6 +42,8 @@ def get_settings() -> Settings:
 
     additional_days_raw = int(os.getenv("ADDITIONAL_DAYS", "14"))
     additional_days = max(additional_days_raw, 14)
+    prefilter_top_k_raw = int(os.getenv("VECTOR_DB_PREFILTER_TOP_K", "300"))
+    prefilter_top_k = max(prefilter_top_k_raw, 1)
 
     return Settings(
         postgres_user=os.getenv("POSTGRESQL_USER", "inha"),
@@ -56,5 +59,6 @@ def get_settings() -> Settings:
         vector_db_port=os.getenv("VECTOR_DB_PORT", "8000"),
         vector_collection=os.getenv("VECTOR_COLLECTION_NAME", "time_series_collection_trep"),
         vector_db_top_k=int(os.getenv("VECTOR_DB_TOP_K", "10")),
+        vector_db_prefilter_top_k=prefilter_top_k,
         trep_model_dir=str(trep_model_dir),
     )

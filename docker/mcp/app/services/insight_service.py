@@ -416,7 +416,56 @@ def _query_chromadb(
     return response.json()
 
 
-def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    patterns = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ]
+    for pattern in patterns:
+        try:
+            return datetime.strptime(value, pattern)
+        except ValueError:
+            continue
+    return None
+
+
+def _extract_time_range(metadata: Dict[str, Any]) -> Optional[tuple[datetime, datetime]]:
+    start_keys = ("original_start", "start_time", "start")
+    end_keys = ("original_end", "end_time", "end")
+    start_dt: Optional[datetime] = None
+    end_dt: Optional[datetime] = None
+
+    for key in start_keys:
+        candidate = metadata.get(key)
+        start_dt = _parse_datetime(candidate) if candidate else None
+        if start_dt:
+            break
+
+    for key in end_keys:
+        candidate = metadata.get(key)
+        end_dt = _parse_datetime(candidate) if candidate else None
+        if end_dt:
+            break
+
+    if start_dt and end_dt:
+        return start_dt, end_dt
+    return None
+
+
+def _ranges_overlap(first: tuple[datetime, datetime], second: tuple[datetime, datetime]) -> bool:
+    start_a, end_a = first
+    start_b, end_b = second
+    return not (end_a < start_b or end_b < start_a)
+
+
+def _format_neighbors(
+    chroma_response: Dict[str, Any],
+    *,
+    target_element: Optional[str],
+    max_neighbors: int,
+) -> List[Dict[str, Any]]:
     ids = chroma_response.get("ids", [[]])
     metadatas = chroma_response.get("metadatas", [[]])
     distances = chroma_response.get("distances", [[]])
@@ -433,6 +482,9 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
     first_embeddings = embeddings[0] if embeddings else []
 
     neighbors: List[Dict[str, Any]] = []
+    seen_ranges: List[tuple[datetime, datetime]] = []
+    normalized_element = target_element.upper() if target_element else None
+
     for idx, metadata, distance, document, embed in zip(
         first_ids,
         first_metadatas,
@@ -440,18 +492,32 @@ def _format_neighbors(chroma_response: Dict[str, Any]) -> List[Dict[str, Any]]:
         first_documents,
         first_embeddings,
     ):
-        cleaned_id = _sanitize_for_json(idx)
-        cleaned_metadata = _sanitize_for_json(metadata)
-        cleaned_distance = _sanitize_for_json(distance)
-        if isinstance(cleaned_metadata, dict):
-            cleaned_metadata.pop("values", None)
-            cleaned_metadata.pop("document", None)
+        sanitized_metadata = _sanitize_for_json(metadata)
+        if not isinstance(sanitized_metadata, dict):
+            continue
+
+        element_value = str(sanitized_metadata.get("element", "")).upper()
+        if normalized_element and element_value != normalized_element:
+            continue
+
+        time_range = _extract_time_range(sanitized_metadata)
+        if time_range and any(_ranges_overlap(time_range, existing) for existing in seen_ranges):
+            continue
+        if time_range:
+            seen_ranges.append(time_range)
+
+        sanitized_metadata.pop("values", None)
+        sanitized_metadata.pop("document", None)
+
         neighbor_payload = {
-            "id": cleaned_id,
-            "distance": cleaned_distance,
-            "metadata": cleaned_metadata,
+            "id": _sanitize_for_json(idx),
+            "distance": _sanitize_for_json(distance),
+            "metadata": sanitized_metadata,
         }
         neighbors.append(neighbor_payload)
+
+        if len(neighbors) >= max_neighbors:
+            break
     return neighbors
 
 
@@ -522,10 +588,11 @@ def build_insight_payload(
     perform_search: bool = True,
     embedding: Optional[List[float]] = None,
     device: Optional[str] = None,
-    top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     settings = get_settings()
+    target_top_k = max(settings.vector_db_top_k, 1)
+    prefilter_top_k = max(settings.vector_db_prefilter_top_k, target_top_k)
 
     if perform_embedding and torch is None:
         raise RuntimeError("PyTorch is required for T-Rep embeddings. Install torch.")
@@ -541,7 +608,8 @@ def build_insight_payload(
         "collection": effective_collection,
         "vector_db_host": settings.vector_db_host,
         "vector_db_port": settings.vector_db_port,
-        "top_k": top_k,
+        "top_k": target_top_k,
+        "prefilter_top_k": prefilter_top_k,
         "filters": filters or {},
         "element": element,
     }
@@ -550,10 +618,14 @@ def build_insight_payload(
     embedding_cache_key: Optional[str] = None
 
     if perform_embedding:
+        if not values:
+            raise ValueError(
+                "perform_embedding=True인 경우 values=[{'cache_key': ...}] 형태로 timeseries_analysis의 cache_key를 전달해야 합니다."
+            )
         documents = _compose_documents(values)
         if not documents:
             raise ValueError(
-                "values must contain at least one time-series when perform_embedding=True"
+                "cache_key를 통해 조회한 시계열이 비어 있습니다. timeseries_analysis 응답을 확인해 주세요."
             )
 
         target_element = (element or "SO2").upper()
@@ -631,6 +703,7 @@ def build_insight_payload(
         try:
             collection_id = _resolve_collection_id(base_url, collection_name)
             metadata["collection_id"] = collection_id
+            element_upper = element.upper() if element else None
             where_filters = dict(filters or {})
             if element:
                 where_filters.setdefault("element", element.upper())
@@ -655,10 +728,14 @@ def build_insight_payload(
                     base_url,
                     collection_id,
                     embedding_vector,
-                    top_k=top_k or settings.vector_db_top_k,
+                    top_k=prefilter_top_k,
                     filters=active_filters,
                 )
-                return _format_neighbors(response)
+                return _format_neighbors(
+                    response,
+                    target_element=element_upper,
+                    max_neighbors=target_top_k,
+                )
 
             primary_error: Optional[str] = None
             try:

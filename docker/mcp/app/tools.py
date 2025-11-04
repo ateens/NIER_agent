@@ -56,7 +56,6 @@ def insight_retrieval(
     perform_search: bool = True,
     embedding: Optional[List[float]] = None,
     device: Optional[str] = None,
-    top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return build_insight_payload(
@@ -67,7 +66,6 @@ def insight_retrieval(
         perform_search=perform_search,
         embedding=embedding,
         device=device,
-        top_k=top_k,
         filters=filters,
     )
 

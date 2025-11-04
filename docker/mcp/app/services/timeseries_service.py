@@ -394,9 +394,10 @@ def perform_timeseries_analysis(
     double_sequence = (
         settings.double_the_sequence if double_sequence is None else double_sequence
     )
-    additional_days = (
-        settings.additional_days if additional_days is None else additional_days
-    )
+    if additional_days is None:
+        additional_days = settings.additional_days
+    else:
+        additional_days = max(int(additional_days), settings.additional_days)
 
     print(
         "###PARAM_DEBUG### "

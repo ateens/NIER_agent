@@ -39,6 +39,9 @@ def get_settings() -> Settings:
     default_trep_dir = base_dir.parent / "vendor" / "modules" / "NIER" / "chroma_trep" / "model_pkl"
     trep_model_dir = Path(os.getenv("TREP_MODEL_DIR", str(default_trep_dir))).expanduser()
 
+    additional_days_raw = int(os.getenv("ADDITIONAL_DAYS", "14"))
+    additional_days = max(additional_days_raw, 14)
+
     return Settings(
         postgres_user=os.getenv("POSTGRESQL_USER", "inha"),
         postgres_password=os.getenv("POSTGRESQL_PASSWORD", "inha3345!!"),
@@ -46,7 +49,7 @@ def get_settings() -> Settings:
         postgres_port=os.getenv("POSTGRESQL_PORT", "5432"),
         postgres_db=os.getenv("POSTGRESQL_DB", "airinfo"),
         double_the_sequence=_str_to_bool(os.getenv("DOUBLE_THE_SEQUENCE"), False),
-        additional_days=int(os.getenv("ADDITIONAL_DAYS", "14")),
+        additional_days=additional_days,
         db_csv_path=os.getenv("NIER_TIMESERIES_CSV_PATH", ""),
         max_related=int(max_related) if max_related is not None else None,
         vector_db_host=os.getenv("VECTOR_DB_HOST", "http://localhost"),

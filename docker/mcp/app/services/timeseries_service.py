@@ -398,6 +398,15 @@ def perform_timeseries_analysis(
         settings.additional_days if additional_days is None else additional_days
     )
 
+    print(
+        "###PARAM_DEBUG### "
+        f"station_id={station_id} element={element} "
+        f"requested_range=({start_time}->{end_time}) "
+        f"double_sequence={double_sequence} "
+        f"additional_days_param={additional_days}",
+        flush=True,
+    )
+
     query = {
         "type": "time_series",
         "region": int(station_id),

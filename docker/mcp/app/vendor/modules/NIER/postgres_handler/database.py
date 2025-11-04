@@ -1,3 +1,4 @@
+import math
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus
@@ -16,6 +17,21 @@ from vendor.modules.NIER.query_parser import validate_query
 
 import pandas as pd
 import os
+
+
+def _stringify_value(value: float) -> str:
+    if isinstance(value, float) and math.isnan(value):
+        return "nan"
+    return str(value)
+
+
+def _preview(values: list, *, limit: int = 10) -> tuple[list[str], list[str]]:
+    if not values:
+        return [], []
+    head = [_stringify_value(v) for v in values[:limit]]
+    tail_source = values[-limit:] if len(values) > limit else values
+    tail = [_stringify_value(v) for v in tail_source]
+    return head, tail
 
 
 def load_pkl_for_range(db_path: str, start_time: str, end_time: str) -> pd.DataFrame:
@@ -218,6 +234,15 @@ def fetch_data(
 
     values = [float("nan") if v == 999999.0 else v for v in values]
     print(f"###DEBUG### 5. After 999999 filtering: {len(values)} values", flush=True)
+    head_preview, tail_preview = _preview(values)
+    print(
+        "###FETCH_RESULT### "
+        f"station={station} element={element} "
+        f"range=({start_time}->{end_time}) "
+        f"count={len(values)} "
+        f"head={head_preview} tail={tail_preview}",
+        flush=True,
+    )
     return {
         "region": station,
         "start_time": start_time,

@@ -203,6 +203,40 @@ def _safe_station_id(value: Any) -> Any:
         return value
 
 
+def _preview_values(values: Sequence[float], limit: int = 10) -> tuple[List[str], List[str]]:
+    if not values:
+        return [], []
+
+    def _stringify(item: Any) -> str:
+        if isinstance(item, float) and math.isnan(item):
+            return "nan"
+        return str(item)
+
+    head = [_stringify(item) for item in values[:limit]]
+    tail_source = values[-limit:] if len(values) > limit else values
+    tail = [_stringify(item) for item in tail_source]
+    return head, tail
+
+
+def _log_series_preview(
+    tag: str,
+    *,
+    station: Any,
+    element: str,
+    start_time: Any,
+    end_time: Any,
+    values: Sequence[float],
+) -> None:
+    head, tail = _preview_values(values)
+    print(
+        "###DTW_PREVIEW### "
+        f"tag={tag} station={station} element={element} "
+        f"range=({start_time}->{end_time}) "
+        f"count={len(values)} head={head} tail={tail}",
+        flush=True,
+    )
+
+
 def compute_similarity_metrics(
     original_series: Dict[str, Any],
     related_series: Sequence[Dict[str, Any]],
@@ -228,6 +262,7 @@ def compute_similarity_metrics(
     base_station = _safe_station_id(original_series.get("region"))
     element = (original_series.get("element") or "").upper()
     station_network = _get_station_network()
+    base_logged = False
 
     for item in related_series:
         target_station = _safe_station_id(item.get("region") or item.get("station_id"))
@@ -248,6 +283,26 @@ def compute_similarity_metrics(
             )
             distances.append(None)
             continue
+
+        if not base_logged:
+            _log_series_preview(
+                "base_series",
+                station=base_station,
+                element=element,
+                start_time=original_series.get("start_time"),
+                end_time=original_series.get("end_time"),
+                values=base_values,
+            )
+            base_logged = True
+
+        _log_series_preview(
+            "related_series",
+            station=target_station,
+            element=item.get("element") or element,
+            start_time=item.get("start_time"),
+            end_time=item.get("end_time"),
+            values=related_values,
+        )
 
         distance = sliding_fast_dtw(
             base_values,

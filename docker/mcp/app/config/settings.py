@@ -42,7 +42,7 @@ def get_settings() -> Settings:
 
     additional_days_raw = int(os.getenv("ADDITIONAL_DAYS", "14"))
     additional_days = max(additional_days_raw, 14)
-    prefilter_top_k_raw = int(os.getenv("VECTOR_DB_PREFILTER_TOP_K", "300"))
+    prefilter_top_k_raw = int(os.getenv("c", "300"))
     prefilter_top_k = max(prefilter_top_k_raw, 1)
 
     return Settings(

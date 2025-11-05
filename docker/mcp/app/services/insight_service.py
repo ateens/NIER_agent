@@ -482,7 +482,7 @@ def _format_neighbors(
     first_embeddings = embeddings[0] if embeddings else []
 
     neighbors: List[Dict[str, Any]] = []
-    seen_ranges: List[tuple[datetime, datetime]] = []
+    seen_ranges: List[tuple[Any, str, tuple[datetime, datetime]]] = []
     normalized_element = target_element.upper() if target_element else None
 
     for idx, metadata, distance, document, embed in zip(
@@ -500,11 +500,21 @@ def _format_neighbors(
         if normalized_element and element_value != normalized_element:
             continue
 
+        region_value = (
+            sanitized_metadata.get("region")
+            or sanitized_metadata.get("station")
+            or sanitized_metadata.get("station_id")
+        )
         time_range = _extract_time_range(sanitized_metadata)
-        if time_range and any(_ranges_overlap(time_range, existing) for existing in seen_ranges):
-            continue
-        if time_range:
-            seen_ranges.append(time_range)
+        if time_range and region_value is not None:
+            if any(
+                existing_region == region_value
+                and existing_element == element_value
+                and _ranges_overlap(time_range, existing_range)
+                for existing_region, existing_element, existing_range in seen_ranges
+            ):
+                continue
+            seen_ranges.append((region_value, element_value, time_range))
 
         sanitized_metadata.pop("values", None)
         sanitized_metadata.pop("document", None)

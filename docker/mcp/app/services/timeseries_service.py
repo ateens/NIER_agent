@@ -153,13 +153,47 @@ def sliding_fast_dtw(
     return float(np.mean(distances))
 
 
-def _assign_similarity_labels(results: List[Dict[str, Any]]) -> None:
+def _summarize_distances(distances: Sequence[Optional[float]]) -> Optional[Dict[str, float]]:
+    valid = [d for d in distances if d is not None and not math.isnan(d)]
+    if not valid:
+        return None
+
+    array = np.asarray(valid, dtype=float)
+    summary = {
+        "count": float(len(valid)),
+        "mean": float(np.mean(array)),
+        "std": float(np.std(array)) if len(valid) > 1 else 0.0,
+        "min": float(np.min(array)),
+        "max": float(np.max(array)),
+        "q1": float(np.quantile(array, 0.25)) if len(valid) > 1 else float(array[0]),
+        "median": float(np.median(array)),
+        "q3": float(np.quantile(array, 0.75)) if len(valid) > 1 else float(array[0]),
+    }
+    return summary
+
+
+def _assign_similarity_labels(
+    results: List[Dict[str, Any]],
+    summary: Optional[Dict[str, float]],
+) -> None:
+    if not summary:
+        for item in results:
+            item["label"] = "insufficient_data" if item["distance"] is None else "undetermined"
+        return
+
+    q1 = summary["q1"]
+    q3 = summary["q3"]
     for item in results:
-        distance = item.get("distance")
+        distance = item["distance"]
         if distance is None or math.isnan(distance):
             item["label"] = "insufficient_data"
+            continue
+        if distance <= q1:
+            item["label"] = "high_similarity"
+        elif distance <= q3:
+            item["label"] = "moderate_similarity"
         else:
-            item["label"] = "undetermined"
+            item["label"] = "low_similarity"
 
 
 def _safe_station_id(value: Any) -> Any:
@@ -317,10 +351,12 @@ def compute_similarity_metrics(
             }
         )
 
-    _assign_similarity_labels(comparisons)
+    summary = _summarize_distances(distances)
+    _assign_similarity_labels(comparisons, summary)
 
     return {
         "results": comparisons,
+        "summary": summary,
         "metadata": {
             "window_size": window_size,
             "missing_value_policy": missing_value_policy,
@@ -512,5 +548,6 @@ def perform_timeseries_analysis(
         "related_errors": related_errors,
         "context": context_payload,
         "comparisons": similarity_payload,
+        "comparison_summary": comparison_summary,
         "metadata": metadata,
     }

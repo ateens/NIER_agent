@@ -15,6 +15,12 @@ from .station_network import StationNetwork
 
 from .common import ensure_sequence, parse_series_values
 
+
+def _to_native_scalar(value: Any) -> Any:
+    if isinstance(value, np.generic):  # numpy scalar -> Python native type
+        return value.item()
+    return value
+
 __all__ = [
     "select_related_stations",
     "build_station_context",
@@ -39,8 +45,8 @@ def select_related_stations(
     network = _get_station_network()
     related = network.get_related_station(station_id, element) or []
     if max_related is not None:
-        return related[:max_related]
-    return related
+        related = related[:max_related]
+    return [int(_to_native_scalar(item)) for item in related]
 
 
 def build_station_context(
@@ -194,6 +200,18 @@ def _assign_similarity_labels(
             item["label"] = "moderate_similarity"
         else:
             item["label"] = "low_similarity"
+
+
+def _classify_z_score(z_score: Optional[float]) -> str:
+    if z_score is None or (isinstance(z_score, float) and math.isnan(z_score)):
+        return "데이터 부족"
+    if z_score < 1.0:
+        return "평균 유사도"
+    if z_score < 2.0:
+        return "약간 낮은 유사도"
+    if z_score < 3.0:
+        return "낮은 유사도"
+    return "매우 낮은 유사도"
 
 
 def _safe_station_id(value: Any) -> Any:
@@ -374,7 +392,6 @@ def perform_timeseries_analysis(
     double_sequence: Optional[bool] = None,
     additional_days: Optional[int] = None,
     include_related: bool = True,
-    include_context: bool = True,
     compute_similarity: bool = True,
     comparison_type: str = "dtw",
     max_related: Optional[int] = None,
@@ -428,6 +445,8 @@ def perform_timeseries_analysis(
         settings.db_csv_path,
     )
 
+    original_data["region"] = _to_native_scalar(original_data.get("region"))
+
     related_results: List[Dict[str, Any]] = []
     related_errors: List[Dict[str, Any]] = []
     related_station_ids: List[int] = []
@@ -456,6 +475,7 @@ def perform_timeseries_analysis(
                     station_query,
                     settings.db_csv_path,
                 )
+                station_data["region"] = _to_native_scalar(station_data.get("region"))
                 related_results.append(station_data)
             except Exception as exc:  # pragma: no cover - surface to caller
                 related_errors.append(
@@ -465,17 +485,8 @@ def perform_timeseries_analysis(
                     }
                 )
 
-    context_payload: Optional[Dict[str, Any]] = None
-    if include_context:
-        context_payload = build_station_context(
-            station_id=int(station_id),
-            element=element,
-            selected_related=related_station_ids,
-        )
-
     similarity_payload: List[Dict[str, Any]] = []
-    comparison_summary: Optional[Dict[str, Any]] = None
-    comparison_metadata: Optional[Dict[str, Any]] = None
+    avg_confidence = 1.0
     if compute_similarity and related_results:
         similarity_output = compute_similarity_metrics(
             original_series=original_data,
@@ -484,9 +495,22 @@ def perform_timeseries_analysis(
             window_size=window_size,
             missing_value_policy=missing_value_policy,
         )
-        similarity_payload = similarity_output["results"]
-        comparison_summary = similarity_output["summary"]
-        comparison_metadata = similarity_output["metadata"]
+        raw_comparisons = similarity_output["results"]
+        confidence_values = [
+            item.get("confidence")
+            for item in raw_comparisons
+            if item.get("confidence") is not None
+        ]
+        if confidence_values:
+            avg_confidence = float(sum(confidence_values) / len(confidence_values))
+
+        similarity_payload = [
+            {
+                "station_id": item.get("station_id"),
+                "z_score_range": _classify_z_score(item.get("z_score")),
+            }
+            for item in raw_comparisons
+        ]
 
     original_values_raw = original_data.get("values", "")
     try:
@@ -525,29 +549,13 @@ def perform_timeseries_analysis(
         station_data["cache_key"] = related_cache_key
         station_data.pop("values", None)
         station_data["value_count"] = related_value_count
-
-    metadata = {
-        "double_sequence": double_sequence,
-        "additional_days": additional_days,
-        "include_related": include_related,
-        "include_context": include_context,
-        "compute_similarity": compute_similarity,
-        "comparison_type": comparison_type,
-        "window_size": window_size,
-        "missing_value_policy": missing_value_policy,
-        "comparison_metadata": comparison_metadata,
-        "analysis_cache_key": cache_key,
-        "analysis_value_count": original_value_count,
-    }
+        station_data["region"] = _to_native_scalar(station_data.get("region"))
 
     return {
         "query": query,
         "original": original_data,
-        "related_station_ids": ensure_sequence(related_station_ids),
-        "related": related_results,
+        "related_station_ids": [int(_to_native_scalar(item)) for item in ensure_sequence(related_station_ids)],
         "related_errors": related_errors,
-        "context": context_payload,
         "comparisons": similarity_payload,
-        "comparison_summary": comparison_summary,
-        "metadata": metadata,
+        "avg_confidence": avg_confidence,
     }

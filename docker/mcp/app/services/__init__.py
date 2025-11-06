@@ -14,6 +14,7 @@ from .timeseries_service import (
     select_related_stations,
     sliding_fast_dtw,
 )
+from .station_directory_service import fetch_station_directory
 
 __all__ = [
     "ensure_sequence",
@@ -26,4 +27,5 @@ __all__ = [
     "perform_timeseries_analysis",
     "build_insight_payload",
     "orchestrate_response",
+    "fetch_station_directory",
 ]

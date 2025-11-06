@@ -5,7 +5,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from itertools import cycle
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 
 import requests
@@ -531,6 +531,70 @@ def _format_neighbors(
     return neighbors
 
 
+def _class_label(value: Any) -> str:
+    if str(value) == "0":
+        return "정상"
+    if str(value) == "3":
+        return "이상"
+    return "미분류"
+
+
+def _similarity_label(distance: float) -> str:
+    if distance < 2.0:
+        return "유사"
+    if distance < 5.0:
+        return "다름"
+    return "매우 다름"
+
+
+def _summarize_neighbors(neighbors: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    abnormal_weight = 0.0
+    normal_weight = 0.0
+    total_weight = 0.0
+    summarized_neighbors: List[Dict[str, Any]] = []
+
+    for neighbor in neighbors:
+        distance = neighbor.get("distance")
+        if distance is None:
+            continue
+        try:
+            distance_value = float(distance)
+        except (TypeError, ValueError):
+            continue
+
+        weight = 1.0 / (distance_value + 1e-6)
+        total_weight += weight
+
+        metadata = neighbor.get("metadata") or {}
+        classification = metadata.get("class")
+        if str(classification) == "0":
+            normal_weight += weight
+        elif str(classification) == "3":
+            abnormal_weight += weight
+
+        summarized_neighbors.append(
+            {
+                "station_id": metadata.get("region")
+                or metadata.get("station")
+                or metadata.get("station_id"),
+                "element": metadata.get("element"),
+                "class_label": _class_label(classification),
+                "similarity": _similarity_label(distance_value),
+                "original_start": metadata.get("original_start"),
+                "original_end": metadata.get("original_end"),
+            }
+        )
+
+    abnormal_probability = (
+        (abnormal_weight / total_weight) * 100.0 if total_weight > 0 else 0.0
+    )
+
+    return {
+        "abnormal_probability": abnormal_probability,
+        "neighbors": summarized_neighbors,
+    }
+
+
 def _coerce_float_sequence(sequence: Any) -> List[float]:
     if sequence is None:
         return []
@@ -799,10 +863,9 @@ def build_insight_payload(
             }
         )
 
-    metadata["embedding_cache_key"] = embedding_cache_key
+    summary = _summarize_neighbors(neighbors)
 
     return {
-        "embedding_cache_key": embedding_cache_key,
-        "neighbors": [_sanitize_for_json(item) for item in neighbors],
-        "metadata": _sanitize_for_json(metadata),
+        "abnormal_probability": summary["abnormal_probability"],
+        "neighbors": summary["neighbors"],
     }

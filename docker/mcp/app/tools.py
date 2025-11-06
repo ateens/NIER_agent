@@ -5,11 +5,18 @@ from fastmcp import FastMCP
 from config import get_settings
 from services import (
     build_insight_payload,
+    fetch_station_directory,
     orchestrate_response,
     perform_timeseries_analysis,
 )
 
 __all__ = ["register_all_tools"]
+
+
+def station_directory(
+    sido: Optional[str] = None,
+) -> Dict[str, Any]:
+    return fetch_station_directory(sido=sido)
 
 
 def timeseries_analysis(
@@ -21,7 +28,6 @@ def timeseries_analysis(
     double_sequence: Optional[bool] = None,
     additional_days: Optional[int] = None,
     include_related: bool = True,
-    include_context: bool = True,
     compute_similarity: bool = True,
     comparison_type: str = "dtw",
     max_related: Optional[int] = None,
@@ -38,7 +44,6 @@ def timeseries_analysis(
         double_sequence=double_sequence,
         additional_days=additional_days,
         include_related=include_related,
-        include_context=include_context,
         compute_similarity=compute_similarity,
         comparison_type=comparison_type,
         max_related=max_related,
@@ -75,8 +80,8 @@ def response_orchestration(
     response_type: Literal["analysis", "general", "log_only"] = "analysis",
     query: Optional[Dict[str, Any]] = None,
     raw_data: Optional[Dict[str, Any]] = None,
-    comparisons: Optional[List[Dict[str, Any]]] = None,
     neighbors: Optional[List[Dict[str, Any]]] = None,
+    insight: Optional[Dict[str, Any]] = None,
     station_context: Optional[Dict[str, Any]] = None,
     history: Optional[List[Dict[str, str]]] = None,
     messages: Optional[List[Dict[str, str]]] = None,
@@ -88,8 +93,8 @@ def response_orchestration(
         response_type=response_type,
         query=query,
         raw_data=raw_data,
-        comparisons=comparisons,
         neighbors=neighbors,
+        insight=insight,
         station_context=station_context,
         history=history,
         messages=messages,
@@ -102,8 +107,17 @@ def response_orchestration(
 def register_all_tools(mcp: FastMCP) -> None:
     mcp.tool(
         description=(
+            "대기오염 측정소 목록을 시/도별로 조회합니다. 이상판정 요청인 경우에는 사용하지 않는 도구입니다. "
+            "sido 파라미터: 시/도명 (예: '서울', '부산', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주' 등) "
+            "또는 '전체'를 입력하면 전국 모든 측정소를 반환합니다."
+        )
+    )(station_directory)
+
+    mcp.tool(
+        description=(
+            "이상 판정 요청인 경우에 처음으로 사용하는 도구입니다. timeseries_analysis, insight_retrieval, response_orchestration 순서로 사용하세요."
             "원본 및 연관 측정소 시계열을 조회하고 필요 시 맥락 정보와 유사도 지표를 함께 제공합니다. "
-            "station_id, element, start_time, end_time은 필수이며, include_related / include_context / "
+            "station_id, element, start_time, end_time은 필수이며, include_related / "
             "compute_similarity 옵션으로 단계를 개별적으로 제어할 수 있습니다."
         )
     )(timeseries_analysis)

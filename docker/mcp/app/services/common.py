@@ -1,13 +1,34 @@
 import math
 from typing import Any, Dict, List, Optional, Sequence
 
+try:  # Optional dependency for numpy-based payloads
+    import numpy as np  # type: ignore
+except ImportError:  # pragma: no cover - numpy is optional
+    np = None  # type: ignore
+
 
 def ensure_sequence(values: Optional[Sequence[Any]]) -> List[Any]:
     if values is None:
         return []
+
     if isinstance(values, list):
         return values
-    return list(values)
+    if isinstance(values, (tuple, set)):
+        return list(values)
+
+    if np is not None:
+        if isinstance(values, np.ndarray):  # type: ignore[arg-type]
+            return values.tolist()
+        if isinstance(values, np.generic):  # numpy scalar (e.g., np.int32)
+            return [values.item()]  # type: ignore[call-arg]
+
+    if isinstance(values, str):  # treat string as single value
+        return [values]
+
+    try:
+        return list(values)  # type: ignore[arg-type]
+    except TypeError:
+        return [values]
 
 
 def parse_series_values(series: Optional[Dict[str, Any]]) -> List[float]:

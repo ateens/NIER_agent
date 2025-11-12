@@ -37,15 +37,14 @@ services:
     build:
       context: ..
       dockerfile: docker/mcp/Dockerfile
-    environment:
-      - NIER_STATION_SIMILARITY_PATH=/app/vendor/assets/similarity_results_v2.pkl
+    # environment:
+    #   - NIER_STATION_SIMILARITY_PATH=/app/vendor/assets/similarity_results_v2.pkl
     env_file:
       - ../.env.langflow
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ../docker/mcp/app:/app
-      - ../models:/app/models
     ports:
       - "9999:9999"
 

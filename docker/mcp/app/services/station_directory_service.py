@@ -23,7 +23,8 @@ def _normalize_token(token: Optional[str]) -> Optional[str]:
 
 def fetch_station_directory(
     *,
-    sido: Optional[str] = None,
+    sido: Optional[str] = None, # city
+    # fetch_all: = ture or false
 ) -> Dict[str, Any]:
     records = _load_station_records()
 
@@ -32,6 +33,15 @@ def fetch_station_directory(
     # "전체" 옵션 처리: sido가 "전체"인 경우 None으로 처리
     if target_sido == "전체":
         target_sido = None
+
+    # if sido:
+    #     entire = false
+
+    # if entire:
+        
+
+    # else:
+    #     # sido 
 
     grouped: Dict[str, Dict[str, Dict[str, str]]] = {}
 

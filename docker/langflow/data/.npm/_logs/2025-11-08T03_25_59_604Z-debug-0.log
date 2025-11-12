@@ -1,0 +1,16 @@
+0 verbose cli /usr/bin/node /usr/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@10.8.2
+2 info using node@v18.20.8
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/app/.npmrc
+5 silly config load:file:/app/data/.npmrc
+6 silly config load:file:/usr/etc/npmrc
+7 verbose title npm exec mcp-echarts
+8 verbose argv "exec" "--yes" "--" "mcp-echarts"
+9 verbose logfile logs-max:10 dir:/app/data/.npm/_logs/2025-11-08T03_25_59_604Z-
+10 verbose logfile /app/data/.npm/_logs/2025-11-08T03_25_59_604Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+13 http fetch GET 200 https://registry.npmjs.org/mcp-echarts 59ms (cache revalidated)
+14 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+15 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368

@@ -26,3 +26,5 @@ docker/chromadb/chroma_db/*
 
 # Cache
 docker/langflow/data/.cache/
+
+chroma.sqlite3

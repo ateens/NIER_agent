@@ -17,3 +17,12 @@ docker/chromadb/chroma_db/*
 .env
 .mamba
 .conda
+
+# Database and Logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Cache
+docker/langflow/data/.cache/

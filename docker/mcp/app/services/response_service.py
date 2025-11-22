@@ -142,8 +142,18 @@ def orchestrate_response(
         )
         answer = prompt
 
-    return {
+    result = {
         "answer": answer,
         "metadata": metadata,
         "log": log_entry,
     }
+    
+    # 그래프 이미지 URL 추가
+    if response_type == "analysis":
+        result["graph_image"] = {
+            "type": "image",
+            "url": "https://github.com/user-attachments/assets/9e7ba293-8c0e-4e98-a81c-4290a2dd1300",
+            "mimeType": "image/png",
+        }
+    
+    return result

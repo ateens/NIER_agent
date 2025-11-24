@@ -168,9 +168,8 @@ def _compose_documents(values: Optional[Any]) -> List[str]:
                     ) from exc
                 raw = cached_payload.get("values") or raw
             elif raw:
-                raise ValueError(
-                    "values 입력은 지원되지 않습니다. timeseries_analysis 결과의 cache_key를 사용하세요."
-                )
+                # Direct values usage allowed
+                pass
             else:
                 raise ValueError(
                     "cache_key가 누락되었습니다. 먼저 timeseries_analysis를 호출해 cache_key를 확보하세요."

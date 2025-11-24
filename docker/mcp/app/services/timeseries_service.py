@@ -528,7 +528,7 @@ def perform_timeseries_analysis(
         }
     )
     original_data["cache_key"] = cache_key
-    original_data.pop("values", None)
+    # original_data.pop("values", None)  <-- Retain values for internal passing
     original_data["value_count"] = original_value_count
 
     for station_data in related_results:
@@ -547,7 +547,7 @@ def perform_timeseries_analysis(
             }
         )
         station_data["cache_key"] = related_cache_key
-        station_data.pop("values", None)
+        # station_data.pop("values", None) <-- Retain values for internal passing
         station_data["value_count"] = related_value_count
         station_data["region"] = _to_native_scalar(station_data.get("region"))
 

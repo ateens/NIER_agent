@@ -24,7 +24,11 @@ docker/chromadb/chroma_db/*
 *.db-wal
 *.log
 
-# Cache
+# Cache and Temp Data
 docker/langflow/data/.cache/
+docker/langflow/data/.local/
+docker/langflow/data/.npm/
+docker/langflow/data/inspect_schema.py
+docker/minio/data/
 
 chroma.sqlite3

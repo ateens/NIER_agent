@@ -16,18 +16,10 @@
 | `element` | str | **Yes** | - | 측정 항목 (예: SO2, NO2 등) | `timeseries_analysis` |
 | `start_time` | str | **Yes** | - | 분석 시작 시간 (YYYY-MM-DD HH:MM:SS) | `timeseries_analysis` |
 | `end_time` | str | **Yes** | - | 분석 종료 시간 (YYYY-MM-DD HH:MM:SS) | `timeseries_analysis` |
-| `history` | List[Dict] | No | None | 이전 대화 기록 (문맥 파악용) | `response_orchestration` |
-| `messages` | List[Dict] | No | None | 현재 대화 메시지 목록 | `response_orchestration` |
-| `window_size` | int | No | 6 | DTW 분석 윈도우 크기 | `timeseries_analysis` |
-| `comparison_type` | str | No | "dtw" | 비교 알고리즘 타입 | `timeseries_analysis` |
-| `missing_value_policy` | str | No | "zero" | 결측치 처리 방식 | `timeseries_analysis` |
-| `collection` | str | No | None | 벡터 DB 컬렉션 이름 | `insight_retrieval` |
-| `device` | str | No | None | 임베딩 생성 장치 (cpu/cuda) | `insight_retrieval` |
-| `filters` | Dict | No | None | 벡터 검색 필터 | `insight_retrieval` |
 
 ### 제거된 인자 (내부 처리 또는 불필요)
-- `cache_key`: 내부 데이터 흐름으로 대체됨.
-- `values`: `timeseries_analysis` 단계의 결과에서 직접 추출.
+- `history`, `messages`, `window_size`, `comparison_type`, `missing_value_policy`, `collection`, `device`, `filters`: 내부 기본값 또는 전역 상수로 처리됨.
+- `cache_key`, `values`: 내부 데이터 흐름으로 대체됨.
 - `perform_embedding`, `perform_search`: 항상 `True`로 동작 (이상 판정 목적).
 - `response_type`: "analysis"로 고정 (필요 시 "general" 분기 가능하나 주 목적은 분석).
 - `query`, `raw_data`, `neighbors`, `insight`, `station_context`: 내부 로직에서 생성 및 전달.

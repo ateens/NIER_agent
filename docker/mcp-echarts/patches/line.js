@@ -10,7 +10,7 @@ const data = zod_1.z.object({
         .preprocess((val) => (val === null ? undefined : val), zod_1.z.string().optional())
         .describe("Group name for multiple series, required when stack is enabled"),
     time: zod_1.z.string(),
-    value: zod_1.z.number(),
+    value: zod_1.z.number().nullable(),
 });
 exports.generateLineChartTool = {
     name: "generate_line_chart",
@@ -78,6 +78,21 @@ exports.generateLineChartTool = {
                 const dataMap = new Map(groupData.map((d) => [d.time, d.value]));
                 // Fill values for all time points (null for missing data)
                 const values = categories.map((time) => { var _a; return (_a = dataMap.get(time)) !== null && _a !== void 0 ? _a : null; });
+                // Determine style based on group name
+                let itemStyle = undefined;
+                let lineStyle = undefined;
+                let z = 2;
+
+                if (groupName.includes("(Target)")) {
+                    itemStyle = { color: '#0000FF' }; // Blue
+                    lineStyle = { width: 3, opacity: 1 };
+                    z = 10; // Bring to front
+                } else if (groupName.includes("(Neighbor)")) {
+                    // Random color or gray, but transparent
+                    lineStyle = { width: 1, opacity: 1 };
+                    z = 1; // Send to back
+                }
+
                 series.push({
                     areaStyle: showArea ? {} : undefined,
                     connectNulls: false,
@@ -87,6 +102,9 @@ exports.generateLineChartTool = {
                     smooth,
                     stack: stack ? "Total" : undefined,
                     type: "line",
+                    itemStyle,
+                    lineStyle,
+                    z,
                 });
             });
         }
@@ -106,6 +124,7 @@ exports.generateLineChartTool = {
             ];
         }
         const echartsOption = {
+            backgroundColor: '#ffffff',
             legend: hasGroups
                 ? {
                     left: "center",

@@ -5,7 +5,8 @@ import os
 import pickle
 import threading
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
@@ -474,6 +475,205 @@ def _summarize_neighbors(neighbors: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return {"abnormal_probability": abnormal_prob, "neighbors": summarized}
 
 # =============================================================================
+# ECharts Integration Helpers
+# =============================================================================
+
+def _call_echarts_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[str]:
+    """
+    Ad-hoc MCP client to call mcp-echarts server.
+    Uses a separate thread for SSE connection to keep it alive.
+    """
+    sse_url = "http://mcp-echarts:3033/sse"
+    result_queue = []
+    endpoint_found = threading.Event()
+    endpoint_url_container = {}
+    
+    def sse_worker():
+        try:
+            # Use a session and long timeout
+            with requests.Session() as session:
+                with session.get(sse_url, stream=True, timeout=60) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line:
+                            decoded = line.decode('utf-8')
+                            if decoded.startswith("data:"):
+                                data_str = decoded.split("data:", 1)[1].strip()
+                                
+                                # Check for endpoint (initial connection)
+                                if not endpoint_found.is_set():
+                                    if data_str.startswith("/messages?sessionId="):
+                                        endpoint_url_container['url'] = data_str
+                                        endpoint_found.set()
+                                        continue
+                                
+                                # Check for tool result
+                                try:
+                                    data = json.loads(data_str)
+                                    if data.get("result") and data.get("id") == 1:
+                                        content = data["result"].get("content", [])
+                                        for item in content:
+                                            if item.get("type") == "text":
+                                                result_queue.append(item.get("text"))
+                                            elif item.get("type") == "image":
+                                                result_queue.append(f"data:{item.get('mimeType')};base64,{item.get('data')}")
+                                        return # Exit worker after getting result
+                                except json.JSONDecodeError:
+                                    pass
+        except Exception as e:
+            logger.error(f"SSE Worker failed: {e}")
+
+    # Start SSE thread
+    t = threading.Thread(target=sse_worker, daemon=True)
+    t.start()
+    
+    # Wait for endpoint
+    if not endpoint_found.wait(timeout=10):
+        logger.error("Timeout waiting for MCP session endpoint.")
+        return None
+        
+    endpoint_url = endpoint_url_container.get('url')
+    if not endpoint_url:
+        return None
+
+    try:
+        # 2. Send Tool Call
+        post_url = f"http://mcp-echarts:3033{endpoint_url}"
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            },
+            "id": 1
+        }
+        
+        # DEBUG: Log the payload
+        try:
+            import json
+            logging.basicConfig(level=logging.INFO)
+            logger.info(f"Sending ECharts Payload: {json.dumps(arguments, default=str)[:1000]}...")
+        except Exception:
+            pass
+
+        post_resp = requests.post(post_url, json=payload, timeout=60)
+        try:
+            post_resp.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"ECharts Tool Call Failed: {e}")
+            logger.error(f"Response Body: {post_resp.text}")
+            raise e
+
+        # 3. Wait for Result (worker thread puts it in queue)
+        # We wait up to 30 seconds for the worker to finish
+        t.join(timeout=30)
+        
+        if result_queue:
+            return result_queue[0]
+            
+    except Exception as e:
+        logger.error(f"Failed to call ECharts tool: {e}")
+    
+    return None
+
+def _generate_comparison_chart(
+    original_data: Dict[str, Any],
+    related_results: List[Dict[str, Any]],
+    element: str
+) -> Optional[str]:
+    """
+    Formats data and calls generate_line_chart tool.
+    """
+    chart_data = []
+    
+    # Target Station
+    target_id = original_data.get("region", "Target")
+    target_values = _parse_series_values(original_data)
+    # Assuming standard time interval (e.g. hourly) and start_time is available
+    # But original_data structure from fetch_data might not have explicit timestamps per value
+    # fetch_data returns 'values' string. We need to reconstruct timestamps or just use indices if times are missing.
+    # Ideally fetch_data should return time array or we infer it.
+    # Let's check fetch_data return structure. It usually returns a dict with 'values'.
+    # If we don't have exact times, we can use 0, 1, 2... or try to parse 'time' if available.
+    
+    # Re-reading fetch_data usage: it returns a dict.
+    # Let's assume we can generate a simple sequence if time is missing.
+    # However, for a line chart, 'time' is required by our schema.
+    
+    # We need to generate timestamps based on start_time and hourly interval?
+    # Or just use simple index strings "1", "2", "3"...
+    
+    start_str = original_data.get("start_time")
+    # If we can't parse time, we'll use indices.
+    
+    def generate_times(start_str, count):
+        times = []
+        try:
+            current = datetime.strptime(str(start_str), "%Y-%m-%d %H:%M:%S")
+            for i in range(count):
+                times.append(current.strftime("%Y-%m-%d %H:%M"))
+                current += timedelta(hours=1) # Assume hourly
+        except:
+            for i in range(count):
+                times.append(str(i))
+        return times
+
+    count = len(target_values)
+    times = generate_times(start_str, count)
+    
+    for i, val in enumerate(target_values):
+        # Convert numpy types to native python types
+        if hasattr(val, "item"):
+            val = val.item()
+            
+        val_check = val
+        if isinstance(val, float) and math.isnan(val):
+            val_check = None
+        elif str(val).lower() == "nan":
+            val_check = None
+                
+        if i < len(times):
+            chart_data.append({
+                "group": f"{target_id} (Target)",
+                "time": times[i],
+                "value": val_check
+            })
+
+    # Neighbor Stations
+    for item in related_results:
+        rid = item.get("region", "Neighbor")
+        r_values = _parse_series_values(item)
+        r_start = item.get("start_time", start_str)
+        r_times = generate_times(r_start, len(r_values))
+        
+        for i, val in enumerate(r_values):
+            if i < len(r_times):
+                chart_data.append({
+                    "group": f"{rid} (Neighbor)",
+                    "time": r_times[i],
+                    "value": val if not math.isnan(val) else None
+                })
+    
+    if not chart_data:
+        return None
+
+    # Call Tool
+    arguments = {
+        "title": f"{element} Concentration Comparison",
+        "axisXTitle": "Time",
+        "axisYTitle": element,
+        "data": chart_data,
+        "width": 800,
+        "height": 400,
+        "showSymbol": False,
+        "showArea": False,
+        "smooth": True
+    }
+    
+    return _call_echarts_tool("generate_line_chart", arguments)
+
+# =============================================================================
 # Main Logic
 # =============================================================================
 
@@ -652,11 +852,21 @@ def perform_abnormal_decision(
         "연관 측정소 비교 결과와 유사한 기존 판정 결과의 지역번호, 성분, 상태, 유사도, 측정일시를 사용자에게 보여주세요\n"
     )
 
+    # 4. Generate Comparison Chart
+    chart_url = _generate_comparison_chart(original_data, related_results, element)
+    
+    print("chart_url","="*60)
+    print(chart_url)
+    print("="*60)
+    # Fallback image if chart generation fails
+    if not chart_url:
+        chart_url = "https://github.com/user-attachments/assets/9e7ba293-8c0e-4e98-a81c-4290a2dd1300"
+
     return {
         "answer": prompt,
         "graph_image": {
             "type": "image",
-            "url": "https://github.com/user-attachments/assets/9e7ba293-8c0e-4e98-a81c-4290a2dd1300",
+            "url": chart_url,
             "mimeType": "image/png",
         }
     }
